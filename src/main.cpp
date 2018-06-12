@@ -15,7 +15,7 @@ int main() {
   SparseMatrix a (nBlock);
   int n = a.n;
   double b[n];
-  double tol = 1.0e-03;
+  double tol = 1.0e-04;
   
   int counter = 0;
   
@@ -31,8 +31,14 @@ int main() {
   
   double x[n];
   for(int i = 0; i < n; i++) {
-    x[i] = b[i];
+    // x[i] = b[i];
+    x[i] = 0;
   }
   
   fgmres(nBlock, b, x, a.val, a.col, a.row, tol);
+  
+  std::cout << "solution:\n";
+  for(int i = 0; i < n; i++) {
+    std::cout << x[i] << "\n";
+  }
 }
