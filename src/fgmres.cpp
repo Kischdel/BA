@@ -5,7 +5,7 @@
 
 char mode = 'N';
 int maxIter = 10;
-int debug = 1;
+int debug = 0;
 int verbose = 0;
 int fgmresLog = 1;
 
@@ -46,6 +46,8 @@ void initializeDoubleZero(int n, double *v) {
 
 void fgmres(int nBlock, double *b, double *x, double *aval, int *acol, int *arow, double tol) {
   
+  
+  // ============= INIT ================ //
   // data
   int n = nBlock * nBlock;
   double r0[n];
@@ -54,10 +56,10 @@ void fgmres(int nBlock, double *b, double *x, double *aval, int *acol, int *arow
   initializeDoubleZero(n * maxIter, v);
   // double z[n * maxIter];
   // initializeDoubleZero(n * maxIter, z);
+  
   double w[n];
   int nH = maxIter + 1;
   double h[nH * maxIter];
-  initializeDoubleZero(nH * maxIter, h);
   
   double beta;
   double c[maxIter + 1];
@@ -65,17 +67,20 @@ void fgmres(int nBlock, double *b, double *x, double *aval, int *acol, int *arow
   double y[maxIter];
   
   int running = 1; //is set to 0 when tol is satisfied and disables restart
-  int restartCounter = 0; // for analyzing purposes
+  int restartCounter = 0; // for logging purposes
   
   if(debug) printVector("debug: x_0", n, x);
   if(debug) printVector("debug: b", n, b);
   
-  
-  // start for restart loop has to be here
+  // ========================= //
+  // start of the restart loop //
+  // ========================= //
   do{
   
-    //clear old h valus for loging purposes
+    //clear old valus
     initializeDoubleZero(nH * maxIter, h);
+    initializeDoubleZero(n * maxIter, v);
+    // initializeDoubleZero(n * maxIter, z);
   
     // compute r0 = b-Ax_0
     mkl_cspblas_dcsrgemv(&mode , &n , aval , arow , acol , x , r0);
