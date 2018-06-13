@@ -6,7 +6,7 @@
 void SparseMatrix::calculateEntrys(int nBlock, std::vector<ent*> *list) {
   
   // diag
-  for(int k = 0; k < nBlock * 4; k++) {
+  for(int k = 0; k < nBlock * nBlock; k++) {
     
     ent *newE = (ent*) malloc(sizeof(struct entry));
     newE->i = k;
@@ -16,9 +16,9 @@ void SparseMatrix::calculateEntrys(int nBlock, std::vector<ent*> *list) {
   }
   
   // sidediag
-  for(int k = 0; k < nBlock * 4; k++) {
+  for(int k = 0; k < nBlock * nBlock; k++) {
     // over diag
-    if(k % nBlock != 3) {
+    if(k % nBlock != nBlock - 1) {
     
       ent *newE = (ent*) malloc(sizeof(struct entry));
       newE->i = k;
@@ -39,7 +39,7 @@ void SparseMatrix::calculateEntrys(int nBlock, std::vector<ent*> *list) {
   }
   
   // side Blocks
-  for(int k = 0; k < nBlock * 3; k++) {
+  for(int k = 0; k < nBlock * (nBlock - 1); k++) {
   
     ent *newE = (ent*) malloc(sizeof(struct entry));
     newE->i = k;
@@ -48,7 +48,7 @@ void SparseMatrix::calculateEntrys(int nBlock, std::vector<ent*> *list) {
     (*list).push_back(newE);
   }
   
-  for(int k = 0; k < nBlock * 3; k++) {
+  for(int k = 0; k < nBlock * (nBlock - 1); k++) {
   
     ent *newE = (ent*) malloc(sizeof(struct entry));
     newE->i = k + nBlock;
