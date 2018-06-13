@@ -15,7 +15,7 @@ int main() {
   SparseMatrix a (nBlock);
   int n = a.n;
   double b[n];
-  double tol = 1.0e-04;
+  double tol = 1.0e-03;
   
   int counter = 0;
   
