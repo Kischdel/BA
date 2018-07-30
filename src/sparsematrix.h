@@ -22,7 +22,7 @@ class SparseMatrix {
     static void calculateEntrys(int nBlock, std::vector<ent*> *list);
     
     static bool PComp(const ent * const & a, const ent * const & b) { return *a < *b; }
-  
+    
 
   public:
   
@@ -30,13 +30,20 @@ class SparseMatrix {
   int nBlock;
   
   double *val;
+  double *valILU;
   int valSize;
   int *col;
   int *row;
   int rowSize;
   
   
-  
+  void print();
+  void printILU();
+  double getValAt(int i, int j);
+  double getILUValAt(int i, int j);
+  void setILUValAt(int i, int j, double val);
+  void computeILU();
+  void saveToFile();
   
   SparseMatrix(int nBlock);
   ~SparseMatrix();
