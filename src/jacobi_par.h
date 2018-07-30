@@ -2,8 +2,7 @@
 #define JACOBI_PAR_H
 
 
-//VectorXd jacobi(VectorXd xOld, MatrixXd a, VectorXd b);
-//VectorXd jacobiPar(VectorXd xOld, MatrixXd a, VectorXd b);
+void jacobiLower(SparseMatrix* I, const int iterations, double *b, double *x);
 
 
 #endif //JACOBI_PAR_H
