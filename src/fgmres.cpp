@@ -94,6 +94,7 @@ void fgmres(int nBlock, double *b, double *x, double *aval, int *acol, int *arow
     //compute gamma0
     gamma[0] = cblas_dnrm2(n, r0, 1);
     if(debug) printNumber("debug: gamma_0", gamma[0]);
+    printNumber("debug: gamma_0", gamma[0]);
   
     //compute v0
     cblas_dcopy (n, r0, 1, v, 1);
@@ -226,6 +227,6 @@ void fgmres(int nBlock, double *b, double *x, double *aval, int *acol, int *arow
     
     if(running) restartCounter++;
     
-  } while (running);
+  } while (running && restartCounter < 4);
   //END
 }
