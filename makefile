@@ -6,8 +6,8 @@ CFLAGS=-fopenmp -m64 -I${MKLROOT}include  -L${MKLROOT}/lib/intel64 -Wl,--no-as-n
 SOURCE=./src/
 TARGET=./build/
 
-$(TARGET)prog: $(TARGET)main.o $(TARGET)jacobi_par.o $(TARGET)parex.o $(TARGET)fgmres.o $(TARGET)sparsematrix.o
-	$(CC) $(CFLAGS) $(CFLAGS3) -o $(TARGET)prog $(TARGET)main.o $(TARGET)jacobi_par.o $(TARGET)parex.o $(TARGET)fgmres.o $(TARGET)sparsematrix.o
+$(TARGET)prog: $(TARGET)main.o $(TARGET)jacobi_par.o $(TARGET)parex.o $(TARGET)sparsematrix.o $(TARGET)BLAS.o $(TARGET)CSR_Solver.o
+	$(CC) $(CFLAGS) $(CFLAGS3) -o $(TARGET)prog $(TARGET)main.o $(TARGET)jacobi_par.o $(TARGET)parex.o $(TARGET)sparsematrix.o $(TARGET)BLAS.o $(TARGET)CSR_Solver.o
 
 $(TARGET)main.o: $(SOURCE)main.cpp
 	$(CC) $(CFLAGS) -c -o $(TARGET)main.o $(SOURCE)main.cpp	
@@ -15,11 +15,19 @@ $(TARGET)main.o: $(SOURCE)main.cpp
 $(TARGET)jacobi_par.o: $(SOURCE)jacobi_par.cpp
 	$(CC) $(CFLAGS) -c -o $(TARGET)jacobi_par.o $(SOURCE)jacobi_par.cpp
  
-$(TARGET)fgmres.o: $(SOURCE)fgmres.cpp
-	$(CC) $(CFLAGS) -c -o $(TARGET)fgmres.o $(SOURCE)fgmres.cpp
+#$(TARGET)fgmres.o: $(SOURCE)fgmres.cpp
+	#$(CC) $(CFLAGS) -c -o $(TARGET)fgmres.o $(SOURCE)fgmres.cpp
  
 $(TARGET)parex.o: $(SOURCE)parex.cpp
 	$(CC) $(CFLAGS) -c -o $(TARGET)parex.o $(SOURCE)parex.cpp
 
 $(TARGET)sparsematrix.o: $(SOURCE)sparsematrix.cpp
 	$(CC) $(CFLAGS) -c -o $(TARGET)sparsematrix.o $(SOURCE)sparsematrix.cpp
+ 
+$(TARGET)BLAS.o: $(SOURCE)BLAS.cpp
+	$(CC) $(CFLAGS) -c -o $(TARGET)BLAS.o $(SOURCE)BLAS.cpp
+
+$(TARGET)CSR_Solver.o: $(SOURCE)CSR_Solver.cpp
+	$(CC) $(CFLAGS) -c -o $(TARGET)CSR_Solver.o $(SOURCE)CSR_Solver.cpp
+
+ 
