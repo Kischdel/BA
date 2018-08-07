@@ -3,6 +3,7 @@
 
 
 void jacobiLower(SparseMatrix* I, const int iterations, double *b, double *x);
+void jacobiUpper(SparseMatrix* I, const int iterations, double *b, double *x);
 
 
 #endif //JACOBI_PAR_H
