@@ -2,6 +2,7 @@
 # include <iostream> 
 # include <cstring>
 # include <stdexcept>
+# include <chrono>
 # include "CSR_Solver.h"
 # include "blas.h"
 # include "jacobi_par.h"
@@ -97,6 +98,15 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     double *vec_result = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);	      //temporary memory for result
 
     double *s = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);	              //helper for preconditioning
+    
+    
+    
+//messuring execution time
+    std::vector<std::chrono::high_resolution_clock::time_point> jacobi_start;
+    std::vector<std::chrono::high_resolution_clock::time_point> jacobi_stop;
+    
+    std::chrono::high_resolution_clock::time_point FGMRES_start = std::chrono::high_resolution_clock::now();
+    
 
 //first step computations
     EFEM_BLAS::dcsrgemv(&transpose, &vectorsize, matrix_a, matrix_i, matrix_j, vec_x0, r);   //residual
@@ -116,10 +126,13 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
 //preconditioning  
         //P->precondition(vectorsize,&v[stepcounter*vectorsize],&z[stepcounter*vectorsize]);
         
+        //messure time
+        jacobi_start.push_back(std::chrono::high_resolution_clock::now());
+        
         jacobiLower(A, preIter, &v[stepcounter*vectorsize], s);
         jacobiUpper(A, preIter, s, &z[stepcounter*vectorsize]);
         
-        
+        jacobi_stop.push_back(std::chrono::high_resolution_clock::now());
         
 //arnoldi process
         EFEM_BLAS::dcsrgemv(&transpose, &vectorsize, matrix_a, matrix_i, matrix_j, &z[stepcounter*vectorsize], w);  
@@ -231,6 +244,25 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
         }
     }
     */
+    
+//end messure time
+    std::chrono::high_resolution_clock::time_point FGMRES_stop = std::chrono::high_resolution_clock::now();
+  
+    auto duration_FGMRES = std::chrono::duration_cast<std::chrono::microseconds>(FGMRES_stop - FGMRES_start).count();
+    
+    std::cout << "execution time: " << duration_FGMRES / 1000000 << " seconds \n";
+    
+    int steps = restart*number_of_restarts + stepcounter + 1;
+    
+    auto duration_jacobi = 0;
+    
+    for (int i = 0; i < jacobi_start.size(); i++) {
+      auto diff = std::chrono::duration_cast<std::chrono::microseconds>(jacobi_stop.at(i) - jacobi_start.at(i)).count();
+      duration_jacobi += diff;
+    }
+    std::cout << "jacobi time: " << (double)duration_jacobi / 1000000 << " seconds \n";
+    std::cout << "average jacobi time: " << ((double)duration_jacobi / steps) / 1000000 << " seconds \n";
+    
     
 //test solution
     if (debug == 1) {
