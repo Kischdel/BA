@@ -1,6 +1,6 @@
 CC=g++
 MKLROOT=/opt/intel/compilers_and_libraries_2018.2.199/linux/mkl/
-CFLAGS=-fopenmp -m64 -I${MKLROOT}include  -L${MKLROOT}/lib/intel64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lgomp -lpthread -lm -ldl
+CFLAGS=-fopenmp -m64 -std=c++11 -I${MKLROOT}include  -L${MKLROOT}/lib/intel64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lgomp -lpthread -lm -ldl
 
 
 SOURCE=./src/
