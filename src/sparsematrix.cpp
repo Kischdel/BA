@@ -45,6 +45,9 @@ void SparseMatrix::printILU() {
 void SparseMatrix::computeILU() {
   
   for(int k = 0; k < n - 1; k++) {
+
+    std::cout << "k: " << k << " / " << n - 2 << "\n";
+
     for(int i = k + 1; i < n; i++) {
       
       if(getValAt(i, k) != 0) {
@@ -145,7 +148,7 @@ void SparseMatrix::saveToFile() {
   
   if (myfile.is_open()) {
   
-    //save single Values
+    //save single values
     myfile << n << "\n";
     myfile << nBlock << "\n";
     myfile << valSize << "\n";
@@ -153,40 +156,25 @@ void SparseMatrix::saveToFile() {
   
     //save Arrays
     for(int i = 0; i < valSize; i++) {
-      myfile << val[i];
-      if (i != valSize - 1)
-        myfile << " ";
-    }
-  
-    myfile << "\n";
-    
-    for(int i = 0; i < valSize; i++) {
-      myfile << valILU[i];
-      if (i != valSize - 1)
-        myfile << " ";
+      myfile << val[i] << "\n";
     }
 
-    myfile << "\n";
+    for(int i = 0; i < valSize; i++) {
+      myfile << valILU[i] << "\n";
+    }
     
     for(int i = 0; i < valSize; i++) {
-      myfile << col[i];
-      if (i != valSize - 1)
-        myfile << " ";
+      myfile << col[i] << "\n";
     }
-  
-    myfile << "\n";
-    
+
     for(int i = 0; i < rowSize; i++) {
-      myfile << row[i];
-      if (i != rowSize - 1)
-        myfile << " ";
+      myfile << row[i] << "\n";
     }
   } else {
     std::cout << "file Error" << "\n";
   }
   myfile.close();
 }
-
 
 void SparseMatrix::calculateEntrys(int nBlock, std::vector<ent*> *list) {
   
@@ -245,6 +233,49 @@ void SparseMatrix::calculateEntrys(int nBlock, std::vector<ent*> *list) {
   
   std::sort(list->begin(), list->end(), SparseMatrix::PComp);
 }
+
+SparseMatrix::SparseMatrix(std::string filename) {
+  
+  std::ifstream myfile;
+  myfile.open(filename.c_str());
+  
+  if(myfile.is_open()) {
+    
+    // load single values
+    myfile >> this->n;
+    myfile >> this->nBlock;
+    myfile >> this->valSize;
+    myfile >> this->rowSize;
+    
+    val = new double[valSize];
+    valILU = new double[valSize];
+    col = new int[valSize];
+    row = new int[rowSize];
+    
+    
+    // load arrays
+    for(int i = 0; i < valSize; i++) {
+      myfile >> val[i];
+    }
+
+    for(int i = 0; i < valSize; i++) {
+      myfile >> valILU[i];
+    }
+    
+    for(int i = 0; i < valSize; i++) {
+      myfile >> col[i];
+    }
+
+    for(int i = 0; i < rowSize; i++) {
+      myfile >> row[i];
+    }
+  
+  } else {
+    std::cout << "file Error" << "\n";
+  } 
+  myfile.close();
+}
+
 
 
 SparseMatrix::SparseMatrix(int nBlock) {

@@ -1,7 +1,8 @@
 #ifndef SPARSEMATRIX_H
 #define SPARSEMATRIX_H
 
-#include <vector> 
+#include <vector>
+#include <string>  
 
 class SparseMatrix {
   private:
@@ -45,7 +46,9 @@ class SparseMatrix {
   void computeILU();
   void saveToFile();
   
+  
   SparseMatrix(int nBlock);
+  SparseMatrix(std::string filename);
   ~SparseMatrix();
 
 };
