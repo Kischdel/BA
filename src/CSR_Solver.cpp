@@ -6,6 +6,7 @@
 # include "CSR_Solver.h"
 # include "blas.h"
 # include "jacobi_par.h"
+# include "result.h"
 
 namespace epsilonfem {
     
@@ -16,7 +17,7 @@ CSR_Solver::CSR_Solver(){}
 
         
 //right preconditioned GMRES with saved preconditioners for flexible changes, also with restart option        
-int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int restart, double *result, int preIter) {
+int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int restart, double *result, int preIter, resultFGMRES *res) {
 /*
     *Incomming parameters:
     *A -> left hand side
@@ -98,8 +99,10 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     double *vec_result = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);	      //temporary memory for result
 
     double *s = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);	              //helper for preconditioning
-    
-    
+  
+
+//initialize vector for data gathering
+    //TODO
     
 //messuring execution time
     std::vector<std::chrono::high_resolution_clock::time_point> jacobi_start;
@@ -131,6 +134,8 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
         
         jacobiLower(A, preIter, &v[stepcounter*vectorsize], s);
         jacobiUpper(A, preIter, s, &z[stepcounter*vectorsize]);
+
+        // check residuum TODO!! and compute average residuum in the end
         
         jacobi_stop.push_back(std::chrono::high_resolution_clock::now());
         
@@ -260,8 +265,14 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
       auto diff = std::chrono::duration_cast<std::chrono::microseconds>(jacobi_stop.at(i) - jacobi_start.at(i)).count();
       duration_jacobi += diff;
     }
+    std::cout << "restart: " << restart << " / Jacobi iterations: " << preIter << "\n";
     std::cout << "jacobi time: " << (double)duration_jacobi / 1000000 << " seconds \n";
     std::cout << "average jacobi time: " << ((double)duration_jacobi / steps) / 1000000 << " seconds \n";
+
+    res->time = (double)duration_FGMRES / 1000000;
+    res->timeJacobi = (double)duration_jacobi / 1000000;
+    res->averageTimeJacobi = ((double)duration_jacobi / steps) / 1000000;
+    res->steps = steps;
     
     
 //test solution
@@ -273,6 +284,7 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
 	
         int steps = restart*number_of_restarts + stepcounter + 1;
         std::cout << "Finished after " << steps << " steps (" << number_of_restarts << " restarts)" << std::endl;
+        std::cout << std::endl;
     }
 
     EFEM_BLAS::efem_free(g);

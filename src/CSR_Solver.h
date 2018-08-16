@@ -1,6 +1,7 @@
 #pragma once
 # include <vector>
 # include "sparsematrix.h"
+# include "result.h"
 
 // # include "basicPreconditioner.h"
 
@@ -19,7 +20,7 @@ namespace epsilonfem {
         int PGMRES(Sparse_Matrix *A,std::vector<double> *b,std::vector<double> *x0,double tol,int restart,std::vector<double> *result);
         */
         
-        int FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int restart, double *result, int preIter);
+        int FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int restart, double *result, int preIter, resultFGMRES *res);
     } ;   
     
 }
