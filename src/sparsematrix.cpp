@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <omp.h>
 
 void SparseMatrix::print() {
 
@@ -46,22 +47,23 @@ void SparseMatrix::computeILU() {
   
   for(int k = 0; k < n - 1; k++) {
 
-    std::cout << "k: " << k << " / " << n - 2 << "\n";
-
-    for(int i = k + 1; i < n; i++) {
-      
+    std::cout << "\nk: " << k << " / " << n - 2;
+    
+    for(int i = k + 1; i < k + 1 + nBlock && i < n; i += nBlock - 1) {
+      std::cout << "    i/k: " << i << "/" << k << "  ";
       if(getValAt(i, k) != 0) {
-             
+        std::cout << " != 0";
         double temp = getILUValAt(i,k) / getILUValAt(k,k);
         setILUValAt(i, k, temp);
         
-        for(int j = k + 1; j < n; j++) {
+        // #pragma omp parallel for
+        for(int j = k + 1; j <= (k + (2 * nBlock)) && j < n; j++) {
           
           if(getValAt(i, j) != 0 && getValAt(k, j) != 0) {
             
-            temp = getILUValAt(i, j) - (temp * getILUValAt(k, j));
+            //temp = getILUValAt(i, j) - (temp * getILUValAt(k, j));
             //temp = getILUValAt(i, j) - (getILUValAt(i, k) * getILUValAt(k, j));
-            setILUValAt(i, j, temp);
+            setILUValAt(i, j, getILUValAt(i, j) - (temp * getILUValAt(k, j)));
             
           }
         }
