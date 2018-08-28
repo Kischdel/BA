@@ -137,6 +137,46 @@ double SparseMatrix::getILUValAt(int i, int j) {
 }
 
 
+double SparseMatrix::getLowerILUValAt(int i, int j) {
+  
+  int rowIndex = row[i];
+  int nextRowIndex = row[i + 1];
+  int dist = nextRowIndex - rowIndex;
+  double *data = valILU + rowIndex;
+  int *dataCol = col + rowIndex;
+  
+  if (i < j) return 0;
+  if (i == j) return 1;
+  
+  if (*dataCol > j) return 0;
+  if (*dataCol == j) return *data;
+  
+  for(int m = 1; m < dist; m++) {
+    if(dataCol[m] == j) return data[m];
+  }
+  return 0;
+}
+
+
+double SparseMatrix::getUpperILUValAt(int i, int j) {
+  
+  int rowIndex = row[i];
+  int nextRowIndex = row[i + 1];
+  int dist = nextRowIndex - rowIndex;
+  double *data = valILU + rowIndex;
+  int *dataCol = col + rowIndex;
+  
+  if (i > j) return 0;
+  
+  if (*dataCol > j) return 0;
+  if (*dataCol == j) return *data;
+  
+  for(int m = 1; m < dist; m++) {
+    if(dataCol[m] == j) return data[m];
+  }
+  return 0;
+}
+
 void SparseMatrix::saveToFile() {
   
   std::ostringstream buildfilename;

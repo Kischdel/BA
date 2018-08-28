@@ -42,6 +42,8 @@ class SparseMatrix {
   void printILU();
   double getValAt(int i, int j);
   double getILUValAt(int i, int j);
+  double getLowerILUValAt(int i, int j);
+  double getUpperILUValAt(int i, int j);
   void setILUValAt(int i, int j, double val);
   void computeILU();
   void saveToFile();
