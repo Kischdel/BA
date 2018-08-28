@@ -99,9 +99,10 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     double *vec_result = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);	      //temporary memory for result
 
     double *s = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);	              //helper for preconditioning
+    double *x_temp = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);                  //helper for preconditioning
   
 
-//initialize vector for data gathering
+//initialize vector for data gathering (residum)
     //TODO
     
 //messuring execution time
@@ -110,6 +111,10 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     
     std::chrono::high_resolution_clock::time_point FGMRES_start = std::chrono::high_resolution_clock::now();
     
+//setup preconditioning accuracy messurement
+    std::vector<double> preconditioning_accuracy;
+
+
 
 //first step computations
     EFEM_BLAS::dcsrgemv(&transpose, &vectorsize, matrix_a, matrix_i, matrix_j, vec_x0, r);   //residual
@@ -132,13 +137,35 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
         //messure time
         jacobi_start.push_back(std::chrono::high_resolution_clock::now());
         
-        jacobiLower(A, preIter, &v[stepcounter*vectorsize], s);
-        jacobiUpper(A, preIter, s, &z[stepcounter*vectorsize]);
+        //fully synconized without concurent access
+        jacobiLowerSync(A, preIter, &v[stepcounter*vectorsize], s, x_temp);
+        jacobiUpperSync(A, preIter, s, &z[stepcounter*vectorsize], x_temp);
 
-        // check residuum TODO!! and compute average residuum in the end
+        //fully asyncon
+        //jacobiLowerSync(A, preIter, &v[stepcounter*vectorsize], s, x_temp;
+        //jacobiUpperSync(A, preIter, s, &z[stepcounter*vectorsize], x_temp);
         
+
         jacobi_stop.push_back(std::chrono::high_resolution_clock::now());
-        
+
+        // check accuracy of preconditioning
+
+        /* for further analysis of the residuum of the jacobi method ther is a
+            need for dcsrgemv, that can handle the ILU part
+
+        EFEM_BLAS::dcsrgemv(&transpose, &vectorsize, matrix_a, matrix_i, matrix_j, vec_result, r);
+        EFEM_BLAS::dcopy (vectorsize, &v[stepcounter*vectorsize], 1, s, 1); 
+        EFEM_BLAS::daxpy (vectorsize, -1, &z[stepcounter*vectorsize], 1, s, 1);
+
+        /* This version doesn't lead to any conclutions
+        EFEM_BLAS::dcopy (vectorsize, &v[stepcounter*vectorsize], 1, s, 1); 
+        EFEM_BLAS::daxpy (vectorsize, -1, &z[stepcounter*vectorsize], 1, s, 1);
+
+        double temp = EFEM_BLAS::dnrm2 (vectorsize, s, 1);
+        std::cout << temp << std::endl;
+        preconditioning_accuracy.push_back(temp); 
+        */
+
 //arnoldi process
         EFEM_BLAS::dcsrgemv(&transpose, &vectorsize, matrix_a, matrix_i, matrix_j, &z[stepcounter*vectorsize], w);  
         
@@ -253,9 +280,7 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
 //end messure time
     std::chrono::high_resolution_clock::time_point FGMRES_stop = std::chrono::high_resolution_clock::now();
   
-    auto duration_FGMRES = std::chrono::duration_cast<std::chrono::microseconds>(FGMRES_stop - FGMRES_start).count();
-    
-    std::cout << "execution time: " << duration_FGMRES / 1000000 << " seconds \n";
+    auto executionTime = std::chrono::duration_cast<std::chrono::microseconds>(FGMRES_stop - FGMRES_start).count();
     
     int steps = restart*number_of_restarts + stepcounter + 1;
     
@@ -265,16 +290,32 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
       auto diff = std::chrono::duration_cast<std::chrono::microseconds>(jacobi_stop.at(i) - jacobi_start.at(i)).count();
       duration_jacobi += diff;
     }
-    std::cout << "restart: " << restart << " / Jacobi iterations: " << preIter << "\n";
-    std::cout << "jacobi time: " << (double)duration_jacobi / 1000000 << " seconds \n";
-    std::cout << "average jacobi time: " << ((double)duration_jacobi / steps) / 1000000 << " seconds \n";
 
-    res->time = (double)duration_FGMRES / 1000000;
+    res->time = (double)executionTime / 1000000;
     res->timeJacobi = (double)duration_jacobi / 1000000;
+    res->timeFgmres = ((double)executionTime - (double)duration_jacobi) / 1000000;
     res->averageTimeJacobi = ((double)duration_jacobi / steps) / 1000000;
+    res->averageTimeFgmres = (((double)executionTime - (double)duration_jacobi) / steps) / 1000000;
     res->steps = steps;
+    res->restarts = number_of_restarts;
     
-    
+    std::cout << "execution time: " << res->time << " seconds \n";
+    std::cout << "restart: " << restart << " / Jacobi iterations: " << preIter << " / matrix: " << A->nBlock << "\n";
+    std::cout << "fgmres time: " << res->timeFgmres << "\n";
+    std::cout << "average fgmres time: " << res->averageTimeFgmres << "\n";
+    std::cout << "jacobi time: " << res->timeJacobi << " seconds \n";
+    std::cout << "average jacobi time: " << res->averageTimeJacobi << " seconds \n";
+
+//compute average accuracy of preconditioner
+    /*
+    double sum = 0;
+    for (int i = 0; i < preconditioning_accuracy.size(); i++) {
+      sum += preconditioning_accuracy.at(i);
+    }
+    double preconditioning_accuracy_average = sum / steps;
+    std::cout << "average accuracy: " << preconditioning_accuracy_average << "\n";
+    */
+
 //test solution
     if (debug == 1) {
         EFEM_BLAS::dcsrgemv(&transpose, &vectorsize, matrix_a, matrix_i, matrix_j, vec_result, r);
@@ -304,6 +345,7 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     EFEM_BLAS::efem_free(matrix_j);
     
     EFEM_BLAS::efem_free(s);
+    EFEM_BLAS::efem_free(x_temp);
         
     return 0;
 }

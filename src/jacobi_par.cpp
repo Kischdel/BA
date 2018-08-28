@@ -1,13 +1,14 @@
 #include <stdio.h>
 #include <iostream>
 #include <omp.h>
+#include "blas.h"
 #include "sparsematrix.h"
+#include "jacobi_par.h"
 
 
 
-
-// teaming with syncronisation while redistributing
-// first test
+// teaming with syncronisation while redistributing teams
+// this version has overhead for function calls
 void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*func)(const int, const int, const int, double*, double*, int*, int*, double*)) {
   
   // initialize parameters
@@ -65,7 +66,7 @@ void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*
 }
 
 
-
+// function to compute a single jacobi line
 void lowerLine(const int lineIndex, const int nBlock, const int n, double *b, double *x, int *row, int *col, double *val) {
 
 	bool firstBlockRow = (lineIndex < nBlock);
@@ -126,7 +127,7 @@ void upperLine(const int lineIndex, const int nBlock, const int n, double *b, do
 	dataCol = col + rowIndex + offsetUpper + 1;
 	
 	// store diagonal Value for division
-	int diagVal = *(data++);
+	double diagVal = *(data++);
 	
 	if (lastBlockRow) {
         	
@@ -147,8 +148,138 @@ void upperLine(const int lineIndex, const int nBlock, const int n, double *b, do
 }
 
 
-// fully syncronized jacobi version
-void jacobiLower(SparseMatrix *I, const int iterations, double *b, double *x) {
+// fully syncronized jacobi version without concurrent access to x
+void jacobiLowerSync(SparseMatrix *I, const int iterations, double *b, double *x0, double *x) {
+      
+  int n = I->n;
+  int nBlock = I->nBlock;
+  
+  double *val = I->valILU;
+  int valSize = I->valSize;
+  int *col = I->col;
+  int *row = I->row;
+  int rowSize = I->rowSize;
+
+  #pragma omp parallel
+  {
+    for (int m = 0; m < iterations; m++) {
+      
+      #pragma omp for schedule(static)
+      for (int i = 0; i < n; i++) {
+        
+        bool firstBlockRow = (i < nBlock);
+        bool notFirstRow = (i % nBlock != 0);
+        int rowIndex = row[i];
+        double x_at_i = b[i];
+        double *data = val + rowIndex;
+        int *dataCol = col + rowIndex;
+        
+        
+        if (firstBlockRow) {
+          
+          if (i != 0)
+            x_at_i -= *(data++) * x0[*(dataCol++)];
+          
+          //x_at_i /= *data;
+          
+        } else {
+        
+          if (notFirstRow)
+            x_at_i -= *(data++) * x0[*(dataCol++)];
+          x_at_i -= *(data++) * x0[*(dataCol++)];
+          
+          //x_at_i /= *data; 
+        }
+        x[i] = x_at_i;
+      }
+      #pragma omp single
+      {
+        epsilonfem::EFEM_BLAS::dcopy (n, x, 1, x0, 1);
+      }
+
+    }
+  }
+}
+
+
+void jacobiUpperSync(SparseMatrix *I, const int iterations, double *b, double *x0, double *x) {
+      
+  int n = I->n;
+  int nBlock = I->nBlock;
+  
+  double *val = I->valILU;
+  int valSize = I->valSize;
+  int *col = I->col;
+  int *row = I->row;
+  int rowSize = I->rowSize;
+  
+  
+  #pragma omp parallel
+  {
+    for (int m = 0; m < iterations; m++) {
+      
+      #pragma omp for schedule(static)
+      for (int i = 0; i < n; i++) {
+        
+        bool firstBlockRow = (i < nBlock);
+        bool notFirstRow = (i % nBlock != 0);
+        bool lastBlockRow = (i >= n - nBlock);
+        bool notLastRow = (i % nBlock != nBlock - 1);
+        int rowIndex = row[i];
+        double x_at_i = b[i];
+        double *data;
+        int *dataCol;
+        
+  
+        // calculate where the diagonal element is located
+        int offsetUpper = 0;
+  
+        if (firstBlockRow) {
+  
+          if (i != 0)
+            offsetUpper = 1;
+  
+        } else {
+  
+          offsetUpper = 1;
+          if (notFirstRow)
+            offsetUpper = 2;
+        }
+  
+        data = val + rowIndex + offsetUpper;
+        dataCol = col + rowIndex + offsetUpper + 1;
+
+        // store diagonal Value for division
+        double diagVal = *(data++);
+  
+        if (lastBlockRow) {
+          
+          if (notLastRow)
+            x_at_i -= *(data++) * x0[*(dataCol++)];
+          
+          x_at_i /= diagVal;
+          
+        } else {
+        
+          if (notLastRow)
+            x_at_i -= *(data++) * x0[*(dataCol++)];
+          x_at_i -= *(data++) * x0[*(dataCol++)];
+          
+          x_at_i /= diagVal; 
+        }
+        x[i] = x_at_i;
+      } 
+      #pragma omp single
+      {
+        epsilonfem::EFEM_BLAS::dcopy (n, x, 1, x0, 1); 
+      }
+    }
+  }
+}
+
+
+// fully syncronized jacobi version with concurrent access to x
+void jacobiLowerHalfSync(SparseMatrix *I, const int iterations, double *b, double *x) {
       
   int n = I->n;
   int nBlock = I->nBlock;
@@ -197,7 +328,7 @@ void jacobiLower(SparseMatrix *I, const int iterations, double *b, double *x) {
 }
 
 
-void jacobiUpper(SparseMatrix *I, const int iterations, double *b, double *x) {
+void jacobiUpperHalfSync(SparseMatrix *I, const int iterations, double *b, double *x) {
       
   int n = I->n;
   int nBlock = I->nBlock;
@@ -245,7 +376,7 @@ void jacobiUpper(SparseMatrix *I, const int iterations, double *b, double *x) {
 	      dataCol = col + rowIndex + offsetUpper + 1;
 	
 	      // store diagonal Value for division
-	      int diagVal = *(data++);
+	      double diagVal = *(data++);
 	
 	      if (lastBlockRow) {
         	
@@ -367,7 +498,7 @@ void jacobiUpperAsync(SparseMatrix *I, const int iterations, double *b, double *
       	dataCol = col + rowIndex + offsetUpper + 1;
 	
       	// store diagonal Value for division
-      	int diagVal = *(data++);
+      	double diagVal = *(data++);
 	
       	if (lastBlockRow) {
 	        
@@ -388,4 +519,272 @@ void jacobiUpperAsync(SparseMatrix *I, const int iterations, double *b, double *
     	}  
 	  }
 	}
+}
+
+double computeResidualLower(SparseMatrix* I, double *b, double *x, double *residual) {
+      
+  int n = I->n;
+  int nBlock = I->nBlock;
+  
+  double *val = I->valILU;
+  int valSize = I->valSize;
+  int *col = I->col;
+  int *row = I->row;
+  int rowSize = I->rowSize;
+      
+  #pragma omp parallel for schedule(static)
+  for (int i = 0; i < n; i++) {
+
+    bool firstBlockRow = (i < nBlock);
+    bool notFirstRow = (i % nBlock != 0);
+    int rowIndex = row[i];
+    //double x_at_i = b[i];
+    double *data = val + rowIndex;
+    int *dataCol = col + rowIndex;
+    residual[i] = 0;
+
+    
+    if (firstBlockRow) {
+      
+      if (i != 0)
+        residual[i] += *(data++) * x[*(dataCol++)];
+      
+      residual[i] += x[*dataCol];
+      
+    } else {
+    
+      if (notFirstRow)
+        residual[i] += *(data++) * x[*(dataCol++)];
+
+      residual[i] += *(data++) * x[*(dataCol++)];
+      residual[i] += x[*dataCol]; 
+    }
+  }
+
+  // compute residual and norm
+  epsilonfem::EFEM_BLAS::daxpy (n, -1, b, 1, residual, 1);
+  double norm = epsilonfem::EFEM_BLAS::dnrm2 (n, residual, 1); 
+
+  return norm;
+}
+
+double computeResidualUpper(SparseMatrix* I, double *b, double *x, double *residual) {
+      
+  int n = I->n;
+  int nBlock = I->nBlock;
+  
+  double *val = I->valILU;
+  int valSize = I->valSize;
+  int *col = I->col;
+  int *row = I->row;
+  int rowSize = I->rowSize;
+  
+  
+  #pragma omp parallel for schedule(static)
+  for (int i = 0; i < n; i++) {
+  
+    bool firstBlockRow = (i < nBlock);
+    bool notFirstRow = (i % nBlock != 0);
+    bool lastBlockRow = (i >= n - nBlock);
+    bool notLastRow = (i % nBlock != nBlock - 1);
+    int rowIndex = row[i];
+    //double x_at_i = b[i];
+    double *data;
+    int *dataCol;
+    residual[i] = 0;
+      
+
+    // calculate where the diagonal element is located
+    int offsetUpper = 0;
+
+    if (firstBlockRow) {
+
+      if (i != 0)
+        offsetUpper = 1;
+
+    } else {
+
+      offsetUpper = 1;
+      if (notFirstRow)
+        offsetUpper = 2;
+    }
+
+    data = val + rowIndex + offsetUpper;
+    dataCol = col + rowIndex + offsetUpper;
+
+    // compute for diag value
+    residual[i] += *(data++) * x[*(dataCol++)];
+
+    if (lastBlockRow) {
+      
+      if (notLastRow)
+        residual[i] += *data * x[*dataCol];
+      
+    } else {
+    
+      if (notLastRow)
+        residual[i] += *(data++) * x[*(dataCol++)];
+      residual[i] += *data * x[*dataCol];
+    }
+  }  
+
+  // compute residual and norm
+  epsilonfem::EFEM_BLAS::daxpy (n, -1, b, 1, residual, 1);
+  double norm = epsilonfem::EFEM_BLAS::dnrm2 (n, residual, 1); 
+
+  return norm;
+}
+
+
+void simpleJacobi(SparseMatrix* I, const int iterations, double *b, double *x0, double *x) {
+
+  double res[I->n];
+  int count = 0;
+  double tol = 1.0e-06;
+  double act = 1.0;
+
+  for(int m = 0; m < iterations; m++) {
+  //while(act > tol) {
+
+    for(int i = 0; i < I->n; i++) {
+      x[i] = b[i];
+
+      for(int j = 0; j < I->n; j++) {
+        
+        if(i != j) {
+          x[i] -= I->getValAt(i,j) * x0[j];
+        }
+      }
+      x[i] /= I->getValAt(i,i); 
+    }
+
+    for(int i = 0; i < I->n; i++) {
+      x0[i] = x[i];
+    }
+
+    act = simpleResidual(I, b, x, res);
+    std::cout << "iter: " << ++count << " res: " << act << "\n";
+  }
+}
+
+
+void simpleJacobiLower(SparseMatrix* I, const int iterations, double *b, double *x0, double *x) {
+  
+  double res[I->n];
+  int count = 0;
+  double tol = 1.0e-06;
+  double act = 1.0;
+
+  for(int m = 0; m < iterations; m++) {
+
+    for(int i = 0; i < I->n; i++) {
+      x[i] = b[i];
+
+      for(int j = 0; j < I->n; j++) {
+        
+        if(i != j) {
+          x[i] -= I->getLowerILUValAt(i,j) * x0[j];
+        }
+      }
+      x[i] /= I->getLowerILUValAt(i,i); 
+    }
+
+    for(int i = 0; i < I->n; i++) {
+      x0[i] = x[i];
+    }
+
+    act = simpleResidualLower(I, b, x, res);
+    std::cout << "iter: " << ++count << " res: " << act << "\n";
+  }
+}
+
+
+void simpleJacobiUpper(SparseMatrix* I, const int iterations, double *b, double *x0, double *x) {
+
+  double res[I->n];
+  int count = 0;
+  double tol = 1.0e-06;
+  double act = 1.0;
+
+  for(int m = 0; m < iterations; m++) {
+
+    for(int i = 0; i < I->n; i++) {
+      x[i] = b[i];
+
+      for(int j = 0; j < I->n; j++) {
+        
+        if(i != j) {
+          x[i] -= I->getUpperILUValAt(i,j) * x0[j];
+        }
+      }
+      std::cout << "befor division: " << x[i] << "\n";
+      x[i] /= I->getUpperILUValAt(i,i); 
+    }
+
+    for(int i = 0; i < I->n; i++) {
+      x0[i] = x[i];
+      std::cout << "new_x: " << x[i] << "\n";
+    }
+
+    act = simpleResidualUpper(I, b, x, res);
+    std::cout << "iter: " << ++count << " res: " << act << "\n";
+  }
+}
+
+
+double simpleResidual(SparseMatrix *I, double *b, double *x, double *residual) {
+
+  for (int i = 0; i < I->n; i++) {
+
+    residual[i] = 0;
+    
+    for (int j = 0; j < I->n; j++) {
+      residual[i] += I->getValAt(i,j) * x[j];
+    }
+  }
+
+  // compute residual and norm
+  epsilonfem::EFEM_BLAS::daxpy (I->n, -1, b, 1, residual, 1);
+  double norm = epsilonfem::EFEM_BLAS::dnrm2 (I->n, residual, 1); 
+
+  return norm;
+
+}
+
+
+double simpleResidualLower(SparseMatrix *I, double *b, double *x, double *residual) {
+  
+  for (int i = 0; i < I->n; i++) {
+
+    residual[i] = 0;
+    
+    for (int j = 0; j < I->n; j++) {
+      residual[i] += I->getLowerILUValAt(i,j) * x[j];
+    }
+  }
+
+  // compute residual and norm
+  epsilonfem::EFEM_BLAS::daxpy (I->n, -1, b, 1, residual, 1);
+  double norm = epsilonfem::EFEM_BLAS::dnrm2 (I->n, residual, 1); 
+
+  return norm;
+}
+
+
+double simpleResidualUpper(SparseMatrix *I, double *b, double *x, double *residual) {
+  
+  for (int i = 0; i < I->n; i++) {
+
+    residual[i] = 0;
+    
+    for (int j = 0; j < I->n; j++) {
+      residual[i] += I->getUpperILUValAt(i,j) * x[j];
+    }
+  }
+
+  // compute residual and norm
+  epsilonfem::EFEM_BLAS::daxpy (I->n, -1, b, 1, residual, 1);
+  double norm = epsilonfem::EFEM_BLAS::dnrm2 (I->n, residual, 1); 
+
+  return norm;
 }

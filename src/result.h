@@ -2,8 +2,8 @@
 #define RESULT_H
 
 typedef struct resultFGMRES {
-  int restart, iter, steps;
-  double time, timeJacobi, averageTimeJacobi;
+  int restart, iter, steps, restarts;
+  double time, timeJacobi, averageTimeJacobi, timeFgmres, averageTimeFgmres;
 } resultFGMRES;
 
 
