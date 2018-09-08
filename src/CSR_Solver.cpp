@@ -44,6 +44,7 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     
     // my matrix objects use a different data layout
     const int vectorsize = A->n;
+    const int64_t vectorsize64 = A->n;
     const int size_data = A->valSize;
     const int size_ia = A->rowSize;
     const int size_ja = A->valSize;
@@ -57,7 +58,7 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     if (rows!=vectorsize || size_ja!=size_data) {
         throw std::invalid_argument("Solver breakdown. Missmatched dimensions in used matrix or vectors.");
     }
-    
+
     int *matrix_i = (int *) EFEM_BLAS::efem_calloc(size_ia,sizeof(int),64);
     int *matrix_j = (int *) EFEM_BLAS::efem_calloc(size_ja,sizeof(int),64);
     double *matrix_a = (double *) EFEM_BLAS::efem_calloc(size_data,sizeof(double),64);
@@ -76,16 +77,17 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     std::memcpy(vec_b,b,sizeof(double)*vectorsize);
     std::memcpy(vec_x0,x0,sizeof(double)*vectorsize);
     
-    
 //first step preperations
     int reached_tolerance = 0;
     int doRestart = 0;
     int number_of_restarts = 0;
         
-    const int min_memory = restart>vectorsize ? vectorsize : restart;
+    //const int min_memory = restart>vectorsize ? vectorsize : restart;
+    const int64_t min_memory = restart>vectorsize ? vectorsize : restart;
         
-    int stepcounter = 0;
-        
+    int64_t stepcounter = 0;
+    
+
 //allocate memory
     double *h = (double *) EFEM_BLAS::efem_calloc((min_memory+1) * min_memory,sizeof(double),64); //initial hessenberg matrix
     double *g = (double *) EFEM_BLAS::efem_calloc(min_memory+1,sizeof(double),64);	              //tolerance test    
@@ -100,30 +102,46 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
 
     double *s = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);	              //helper for preconditioning
     double *x_temp = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);                  //helper for preconditioning
-  
+
 
 //initialize vector for data gathering (residum)
     //TODO
     
 //messuring execution time
     std::vector<std::chrono::high_resolution_clock::time_point> jacobi_start;
+    std::vector<std::chrono::high_resolution_clock::time_point> jacobi_between;
     std::vector<std::chrono::high_resolution_clock::time_point> jacobi_stop;
     
     std::chrono::high_resolution_clock::time_point FGMRES_start = std::chrono::high_resolution_clock::now();
     
 //setup preconditioning accuracy messurement
-    std::vector<double> preconditioning_accuracy;
-
+    std::vector<double> normJacobiLower;
+    std::vector<double> normJacobiUpper;
 
 
 //first step computations
     EFEM_BLAS::dcsrgemv(&transpose, &vectorsize, matrix_a, matrix_i, matrix_j, vec_x0, r);   //residual
     EFEM_BLAS::dscal (vectorsize, -1, r, 1);
     EFEM_BLAS::daxpy (vectorsize, 1, vec_b, 1, r, 1);
-    g[0] = EFEM_BLAS::dnrm2 (vectorsize, r, 1);                                  //tolerance test
-    EFEM_BLAS::dcopy (vectorsize, r, 1, &v[0], 1);                               //vectors to compute solution
+    g[0] = EFEM_BLAS::dnrm2 (vectorsize, r, 1);                              //tolerance test
+    /* debuging overflow
+    std::cout << "debug: restart: " << restart << "\n";                                     
+    std::cout << "debug: vectorsize: " << vectorsize << "\n";
+    std::cout << "debug: address of v[0] : " << &v[0] << "\n";
+    std::cout << "debug: size of v : " << vectorsize*(min_memory+1) << "\n";
+    std::cout << "debug: size of long : " << sizeof( long ) << "\n";
+    std::cout << "debug: size of uint64_t : " << sizeof( uint64_t ) << "\n";
+    std::cout << "debug: size of int : " << sizeof( int ) << "\n";
+    */
+    EFEM_BLAS::dcopy (vectorsize, r, 1, &v[0], 1);                           //vectors to compute solution
     EFEM_BLAS::dscal (vectorsize, 1.0/g[0], &v[0], 1);
-    
+
+
+//pointer to upper and lower
+    void (*lower)(const int, const int, const int, double*, double*, int*, int*, double*) = &lowerLine;
+    void (*upper)(const int, const int, const int, double*, double*, int*, int*, double*) = &upperLine;
+
+
 //iterations until convergence or doRestart
     while(reached_tolerance==0 && doRestart==0) {
         
@@ -137,45 +155,38 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
         //messure time
         jacobi_start.push_back(std::chrono::high_resolution_clock::now());
         
-        //fully synconized without concurent access
-        jacobiLowerSync(A, preIter, &v[stepcounter*vectorsize], s, x_temp);
-        jacobiUpperSync(A, preIter, s, &z[stepcounter*vectorsize], x_temp);
+        //upper jacobi
+        //jacobiLowerSync(A, preIter, &v[stepcounter*vectorsize], s, x_temp);
+        jacobiLowerHalfSync(A, preIter, &v[stepcounter*vectorsize], s);
+        //jacobiLowerAsync(A, preIter, &v[stepcounter*vectorsize], s);
+        //jacobi(A, preIter, &v[stepcounter*vectorsize], s, lower);
 
-        //fully asyncon
-        //jacobiLowerSync(A, preIter, &v[stepcounter*vectorsize], s, x_temp;
+        jacobi_between.push_back(std::chrono::high_resolution_clock::now());
+
+        //lower jacobi
         //jacobiUpperSync(A, preIter, s, &z[stepcounter*vectorsize], x_temp);
-        
+        jacobiUpperHalfSync(A, preIter, s, &z[stepcounter*vectorsize]);
+        //jacobiUpperAsync(A, preIter, s, &z[stepcounter*vectorsize]);
+        //jacobi(A, preIter, s, &z[stepcounter*vectorsize], upper);
 
         jacobi_stop.push_back(std::chrono::high_resolution_clock::now());
 
+        
         // check accuracy of preconditioning
+        normJacobiLower.push_back(computeResidualLower(A, &v[stepcounter*vectorsize], s, x_temp));
+        normJacobiUpper.push_back(computeResidualUpper(A, s, &z[stepcounter*vectorsize], x_temp));
 
-        /* for further analysis of the residuum of the jacobi method ther is a
-            need for dcsrgemv, that can handle the ILU part
-
-        EFEM_BLAS::dcsrgemv(&transpose, &vectorsize, matrix_a, matrix_i, matrix_j, vec_result, r);
-        EFEM_BLAS::dcopy (vectorsize, &v[stepcounter*vectorsize], 1, s, 1); 
-        EFEM_BLAS::daxpy (vectorsize, -1, &z[stepcounter*vectorsize], 1, s, 1);
-
-        /* This version doesn't lead to any conclutions
-        EFEM_BLAS::dcopy (vectorsize, &v[stepcounter*vectorsize], 1, s, 1); 
-        EFEM_BLAS::daxpy (vectorsize, -1, &z[stepcounter*vectorsize], 1, s, 1);
-
-        double temp = EFEM_BLAS::dnrm2 (vectorsize, s, 1);
-        std::cout << temp << std::endl;
-        preconditioning_accuracy.push_back(temp); 
-        */
 
 //arnoldi process
         EFEM_BLAS::dcsrgemv(&transpose, &vectorsize, matrix_a, matrix_i, matrix_j, &z[stepcounter*vectorsize], w);  
         
 //computing hessenberg matrix
         for (int i=0;i<=stepcounter;++i) {
-            h[i*min_memory+stepcounter] = EFEM_BLAS::ddot (vectorsize, &v[i*vectorsize], 1, w, 1);
+            h[i*min_memory+stepcounter] = EFEM_BLAS::ddot (vectorsize, &v[i*vectorsize64], 1, w, 1);
         }
         
         for (int i=0;i<=stepcounter;++i) {
-            EFEM_BLAS::daxpy (vectorsize,(-1.0)*h[i*min_memory+stepcounter],&v[i*vectorsize],1,w,1);
+            EFEM_BLAS::daxpy (vectorsize,(-1.0)*h[i*min_memory+stepcounter],&v[i*vectorsize64],1,w,1);
         }
         h[(stepcounter+1)*min_memory+stepcounter] = EFEM_BLAS::dnrm2 (vectorsize, w, 1); 
 
@@ -232,7 +243,7 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
             }
 	
             for (int i=0;i<=stepcounter;++i) {                          //compute x_m
-                EFEM_BLAS::daxpy (vectorsize, y[i], &z[i*vectorsize], 1, vec_result, 1);
+                EFEM_BLAS::daxpy (vectorsize, y[i], &z[i*vectorsize64], 1, vec_result, 1);
             }
             EFEM_BLAS::daxpy (vectorsize, 1, vec_x0, 1, vec_result, 1);
            
@@ -255,66 +266,68 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     EFEM_BLAS::dscal (vectorsize, 0, vec_result, 1);
 
     for (int i=0;i<=stepcounter;++i) {
-       EFEM_BLAS::daxpy (vectorsize, y[i], &z[i*vectorsize], 1, vec_result, 1);
+       EFEM_BLAS::daxpy (vectorsize, y[i], &z[i*vectorsize64], 1, vec_result, 1);
     }
     EFEM_BLAS::daxpy (vectorsize, 1, vec_x0, 1, vec_result, 1);
     
     for (int i=0;i<vectorsize;++i) {
-            result[i] = vec_result[i];
-        }
-    
-    /*
-    int rSize = (int)result->size();
-    
-    if (rSize>=vectorsize) {
-        std::memcpy(&(result->at(0)),&vec_result[0],sizeof(double)*vectorsize);
+        result[i] = vec_result[i];
     }
-    else {
-        result->clear();
-        for (int i=0;i<vectorsize;++i) {
-            result->push_back(vec_result[i]);
-        }
-    }
-    */
     
 //end messure time
     std::chrono::high_resolution_clock::time_point FGMRES_stop = std::chrono::high_resolution_clock::now();
-  
     auto executionTime = std::chrono::duration_cast<std::chrono::microseconds>(FGMRES_stop - FGMRES_start).count();
     
-    int steps = restart*number_of_restarts + stepcounter + 1;
-    
-    auto duration_jacobi = 0;
+//calculate times
+    auto duration_jacobi_lower = 0;
+    auto duration_jacobi_upper = 0;
     
     for (int i = 0; i < jacobi_start.size(); i++) {
-      auto diff = std::chrono::duration_cast<std::chrono::microseconds>(jacobi_stop.at(i) - jacobi_start.at(i)).count();
-      duration_jacobi += diff;
+      auto diff_lower = std::chrono::duration_cast<std::chrono::microseconds>(jacobi_between.at(i) - jacobi_start.at(i)).count();
+      auto diff_upper = std::chrono::duration_cast<std::chrono::microseconds>(jacobi_stop.at(i) - jacobi_between.at(i)).count();
+      duration_jacobi_lower += diff_lower;
+      duration_jacobi_upper += diff_upper;
     }
 
+//calculate average norm of jacobi
+    double sum_norm_lower = 0;
+    double sum_norm_upper = 0;
+
+    for (int i = 0; i < normJacobiUpper.size(); i++) {
+      sum_norm_lower += normJacobiLower.at(i);
+      sum_norm_upper += normJacobiUpper.at(i);
+    }
+
+//store results in result struct
+    int steps = restart*number_of_restarts + stepcounter + 1;
+
     res->time = (double)executionTime / 1000000;
-    res->timeJacobi = (double)duration_jacobi / 1000000;
-    res->timeFgmres = ((double)executionTime - (double)duration_jacobi) / 1000000;
-    res->averageTimeJacobi = ((double)duration_jacobi / steps) / 1000000;
-    res->averageTimeFgmres = (((double)executionTime - (double)duration_jacobi) / steps) / 1000000;
+    res->timeJacobiLower = (double)duration_jacobi_lower / 1000000;
+    res->timeJacobiUpper = (double)duration_jacobi_upper / 1000000;
+    res->timeFgmres = ((double)executionTime - ((double)duration_jacobi_lower + (double)duration_jacobi_upper)) / 1000000;
+    res->averageTimeJacobiLower = ((double)duration_jacobi_lower / steps) / 1000000;
+    res->averageTimeJacobiUpper = ((double)duration_jacobi_upper / steps) / 1000000;
+    res->averageTimeFgmres = (((double)executionTime - ((double)duration_jacobi_lower + (double)duration_jacobi_upper)) / steps) / 1000000;
+
+    res->averageNormJacobiLower = sum_norm_lower / steps;
+    res->averageNormJacobiUpper = sum_norm_upper / steps;
+
     res->steps = steps;
     res->restarts = number_of_restarts;
-    
+
+//print results
     std::cout << "execution time: " << res->time << " seconds \n";
     std::cout << "restart: " << restart << " / Jacobi iterations: " << preIter << " / matrix: " << A->nBlock << "\n";
     std::cout << "fgmres time: " << res->timeFgmres << "\n";
     std::cout << "average fgmres time: " << res->averageTimeFgmres << "\n";
-    std::cout << "jacobi time: " << res->timeJacobi << " seconds \n";
-    std::cout << "average jacobi time: " << res->averageTimeJacobi << " seconds \n";
+    std::cout << "jacobi time lower: " << res->timeJacobiLower << " s \n";
+    std::cout << "average jacobi time lower: " << res->averageTimeJacobiLower << " s \n";
+    std::cout << "average jacobi norm lower: " << res->averageNormJacobiLower << "\n";
+    std::cout << "jacobi time upper: " << res->timeJacobiUpper << " s \n";
+    std::cout << "average jacobi time upper: " << res->averageTimeJacobiUpper << " s \n";
+    std::cout << "average jacobi norm upper: " << res->averageNormJacobiUpper << "\n";
 
-//compute average accuracy of preconditioner
-    /*
-    double sum = 0;
-    for (int i = 0; i < preconditioning_accuracy.size(); i++) {
-      sum += preconditioning_accuracy.at(i);
-    }
-    double preconditioning_accuracy_average = sum / steps;
-    std::cout << "average accuracy: " << preconditioning_accuracy_average << "\n";
-    */
+
 
 //test solution
     if (debug == 1) {

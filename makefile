@@ -7,7 +7,7 @@ SOURCE=./src/
 TARGET=./build/
 
 $(TARGET)prog: $(TARGET)main.o $(TARGET)jacobi_par.o $(TARGET)parex.o $(TARGET)sparsematrix.o $(TARGET)BLAS.o $(TARGET)CSR_Solver.o
-	$(CC) $(CFLAGS) $(CFLAGS) -o $(TARGET)prog $(TARGET)main.o $(TARGET)jacobi_par.o $(TARGET)parex.o $(TARGET)sparsematrix.o $(TARGET)BLAS.o $(TARGET)CSR_Solver.o
+	$(CC) $(CFLAGS) -o $(TARGET)prog $(TARGET)main.o $(TARGET)jacobi_par.o $(TARGET)parex.o $(TARGET)sparsematrix.o $(TARGET)BLAS.o $(TARGET)CSR_Solver.o
 
 $(TARGET)main.o: $(SOURCE)main.cpp
 	$(CC) $(CFLAGS) -c -o $(TARGET)main.o $(SOURCE)main.cpp	

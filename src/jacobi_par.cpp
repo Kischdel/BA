@@ -6,10 +6,175 @@
 #include "jacobi_par.h"
 
 
+// "dynamic" blockasynchron jacobi
+void jacobiLowerDyn(SparseMatrix *I, const int iterations, double *b, double *x, int asyncBlockCount) {
+
+  // initialize parameters
+  int n = I->n;
+  int nBlock = I->nBlock;
+  
+  double *val = I->valILU;
+  int valSize = I->valSize;
+  int *col = I->col;
+  int *row = I->row;
+  int rowSize = I->rowSize;
+
+  int numSections = 1;
+  int teamConfig[numSections] = {1}; //, 1, 1, 1};
+  teamConfig[0] = asyncBlockCount;
+
+
+  int maxThreadCount = omp_get_max_threads();
+
+  // arrays to controll execution
+  int iterationsPerThread[maxThreadCount] = {};
+  int iterationsPerTeam[maxThreadCount] = {};
+  int teamMembersFinished[maxThreadCount] = {};
+  int teamMembersFinishedIteration[maxThreadCount] = {};
+  
+  // parameter for barrier
+  int teamBarrier[maxThreadCount] = {};
+  omp_lock_t locks[maxThreadCount];
+
+  // number of teams finished
+  int teamsFinished = 0;
+
+  // initialize abort condition
+  bool proceedToNextSection = false;
+
+
+
+  #pragma omp parallel num_threads(maxThreadCount)
+  {
+    // initialize omp parameter
+    int tid = omp_get_thread_num();
+    int numThreads = omp_get_num_threads();
+    omp_init_lock(&locks[tid]);
+
+
+    // loop for sections
+    for (int i = 0; i < numSections; i++) {
+
+      // initialize parameter that define worksplitting
+      int numTeams = teamConfig[i];
+
+      int threadsPerTeam = numThreads / numTeams;
+      int team = tid / threadsPerTeam;
+
+      int leader = team * threadsPerTeam;
+
+      int chunkRest = n % numThreads;
+      int tidOffset = numThreads - chunkRest;
+      int chunkSize = n / numThreads;
+  
+      int start;
+      int end;
+      int offset = tidOffset * chunkSize;
+
+
+      if (tid < tidOffset) {
+
+        start = tid * chunkSize;
+        end = start + chunkSize;
+
+      } else {
+
+        chunkSize++;
+        start = offset + ((tid - tidOffset) * chunkSize);
+        end = start + chunkSize;
+      }
+
+      /*// temp console output
+      #pragma omp critical
+      {
+        std::cout << "tid: " << tid << " team: " << team << " leader: " << leader << " section: " << i;
+        std::cout << " start: " << start << " stop: " << end << std::endl;
+      }
+      */
+
+
+      // blockasynchron loop
+      do {
+
+        // progress lines
+        for (int j = start; j < end; j++) {
+          lowerLine(j, nBlock, n, b, x, row, col, val);
+        }
+
+        iterationsPerThread[tid]++;
+
+        /*#pragma omp critical
+        {
+            std::cout << "tid: " << tid << " team: " << team << " leader: " << leader << " iterations executed " << iterationsPerThread[tid] << std::endl;
+        }
+        */
+
+        // update thread iter count and check if min iterations reached
+        if (tid == leader && iterationsPerThread[tid] == iterations) {
+
+          #pragma omp atomic
+          teamsFinished++;
+
+          /*#pragma omp critical
+          {
+            std::cout << "tid: " << tid << " team: " << team << " leader: " << leader << " teamsFinished: " << teamsFinished << std::endl;
+          }
+          */
+
+          if (teamsFinished >= numTeams / 2) {
+
+            proceedToNextSection = true;
+          }
+        }
+
+        // custom Barrier
+        while (teamBarrier[team] != 0);
+
+        omp_set_lock(&locks[team]);
+        if (++teamMembersFinishedIteration[team] < threadsPerTeam) {
+
+          omp_unset_lock(&locks[team]);
+          while (teamBarrier[team] == 0);
+          omp_set_lock(&locks[team]);
+
+        } else {
+
+          teamBarrier[team] = 1;
+        }
+
+        if (--teamMembersFinishedIteration[team] == 0) {
+          
+          teamBarrier[team] = 0; 
+        }
+        omp_unset_lock(&locks[team]);
+        // end custom Barrier
+
+      } while (!proceedToNextSection);
+
+
+      // barrier before preparation for next section
+      #pragma omp barrier
+
+      // reset parameters
+      teamMembersFinished[tid] = 0;
+
+
+      
+      // end of section barrier
+      #pragma omp barrier
+
+    } // end Sections
+
+    #pragma omp barrier
+    // cleanup
+    omp_destroy_lock(&locks[tid]);
+  }
+}
+
+
 
 // teaming with syncronisation while redistributing teams
-// this version has overhead for function calls
-void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*func)(const int, const int, const int, double*, double*, int*, int*, double*)) {
+void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*func)(const int, const int, const int, double*, double*, int*, int*, double*), int asyncBlockCount) {
   
   // initialize parameters
   int n = I->n;
@@ -21,48 +186,119 @@ void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*
   int *row = I->row;
   int rowSize = I->rowSize;
 
+  // parameter for y tmp vector
+  // double *y = new double[n] {};
+
   // initialize OMP parameter
   omp_set_nested(1);
   int maxThreadCount = omp_get_max_threads();
-	std::cout << "maxThreadCount: " << maxThreadCount << std::endl;
+	//std::cout << "maxThreadCount: " << maxThreadCount << std::endl;
 
 	// this part is hardcoded for the testmachine it may not work well on other setups
-	int sections = 6;
-	int teams[6] = {1,1,6,12,24,48};
+  int sections = 1;
+  int iterSections = iterations;
+	int teams[sections] = {6}; //, 3, 8, 24};
+  // temp for manuell block asyncronus execution without Blockrestructuration
+  teams[0] = asyncBlockCount;
 
-	for(int i = 0; i < sections; i++) {
+  // for every section
+  for(int i = 0; i < sections; i++)
+  {
+    
+    // split into teams
+    #pragma omp parallel num_threads(teams[i])
+    {
 
-		int chunkSize = n / teams[i];
+      int parent_tid = omp_get_thread_num();
+      int threads = omp_get_num_threads(); 
 
-		#pragma omp parallel num_threads(teams[i])
-		{
-			int tid = omp_get_thread_num();
-			int threads = omp_get_num_threads(); 
+      int chunkRest = n % teams[i];
+      int tidOffset = threads - chunkRest;
+      int chunkSize = n / teams[i];
+  
+      int start;
+      int end;
+      int offset = tidOffset * chunkSize;
 
-			int start = tid * chunkSize;
-			int end;
-			if (tid < teams[i] - 1)
-				 end = (tid + 1) * chunkSize;
-			else
-				 end = n;
+      if (parent_tid < tidOffset) {
 
-			int threadsPerTeam = maxThreadCount / teams[i];
+        start = parent_tid * chunkSize;
+        end = start + chunkSize;
 
-			#pragma omp critical
-			{
-				std::cout << "tid: " << tid << " threads_active: " << threads << std::endl;
-				std::cout << "start: " << start << " stop: " << end << std::endl;
-			}
+      } else {
 
-			#pragma omp barrier
+        chunkSize++;
+        start = offset + ((parent_tid - tidOffset) * chunkSize);
+        end = start + chunkSize;
+      }
 
-			#pragma omp parallel for num_threads(threadsPerTeam)
-			for (int k = start; k < end; ++k)
-			{
-					func(k, nBlock, n, b, x, row, col, val);
-			}
-		}
-	}
+	 		int threadsPerTeam = maxThreadCount / teams[i];
+  
+      /*
+	 		#pragma omp critical
+	 		{
+	 			std::cout << "tid: " << parent_tid << " threads_active: " << threads;
+	 			std::cout << " start: " << start << " stop: " << end << std::endl;
+	 		}
+
+  
+	 		#pragma omp barrier
+      */
+
+      //iterations in jacobi per section
+      for (int j = 0; j < iterSections; j++)
+      {
+        //create child threads in each team to solve lines
+        if (func == &lowerLine) {
+          #pragma omp parallel for num_threads(threadsPerTeam)
+          for (int k = start; k < end; ++k)
+          {
+            /*
+            #pragma omp critical
+            {
+              std::cout << "tid: " << parent_tid << " / " << omp_get_thread_num() << " threads_active: " << omp_get_num_threads();
+              std::cout << " iter: " << j;
+              std::cout << " line: " << k << std::endl;
+            }
+            */
+            func(k, nBlock, n, b, x, row, col, val);
+          }
+        } else {
+          #pragma omp parallel for num_threads(threadsPerTeam)
+          for (int k = end - 1; k >= start; --k)
+          //for (int k = start; k < end; ++k)
+          {
+            /*
+            #pragma omp critical
+            {
+              std::cout << "tid: " << parent_tid << " / " << omp_get_thread_num() << " threads_active: " << omp_get_num_threads();
+              std::cout << " iter: " << j;
+              std::cout << " line: " << k << std::endl;
+            }
+            */
+            func(k, nBlock, n, b, x, row, col, val);
+          }
+        }
+        
+      }
+      
+      //#pragma omp barrier
+
+      /*
+      #pragma omp single
+      {
+        if(func == &lowerLine)
+          std::cout << "section: " << i << " normLower: " << computeResidualLower(I, b, x, y) << "\n";
+        else
+          std::cout << "section: " << i << " normUpper: " << computeResidualUpper(I, b, x, y) << "\n";
+      }
+      */
+
+    } //end #pragma parallel 
+  } //end for section
+  
+  //free memory
+  //delete[] y;
 }
 
 
@@ -192,11 +428,11 @@ void jacobiLowerSync(SparseMatrix *I, const int iterations, double *b, double *x
         }
         x[i] = x_at_i;
       }
-      #pragma omp single
-      {
-        epsilonfem::EFEM_BLAS::dcopy (n, x, 1, x0, 1);
-      }
+      #pragma omp for schedule(static)
+      for (int i = 0; i < n; i++) {
 
+        x0[i] = x[i];
+      }
     }
   }
 }
@@ -269,133 +505,12 @@ void jacobiUpperSync(SparseMatrix *I, const int iterations, double *b, double *x
         }
         x[i] = x_at_i;
       } 
-      #pragma omp single
-      {
-        epsilonfem::EFEM_BLAS::dcopy (n, x, 1, x0, 1); 
+      #pragma omp for schedule(static)
+      for (int i = 0; i < n; i++) {
+
+        x0[i] = x[i];
       }
     }
-  }
-}
-
-
-// fully syncronized jacobi version with concurrent access to x
-void jacobiLowerHalfSync(SparseMatrix *I, const int iterations, double *b, double *x) {
-      
-  int n = I->n;
-  int nBlock = I->nBlock;
-  
-  double *val = I->valILU;
-  int valSize = I->valSize;
-  int *col = I->col;
-  int *row = I->row;
-  int rowSize = I->rowSize;
-  
-  
-  #pragma omp parallel
-  {
-  	for (int m = 0; m < iterations; m++) {
-	    
-    	#pragma omp for schedule(static)
-    	for (int i = 0; i < n; i++) {
-	      
-      	bool firstBlockRow = (i < nBlock);
-      	bool notFirstRow = (i % nBlock != 0);
-      	int rowIndex = row[i];
-      	double x_at_i = b[i];
-      	double *data = val + rowIndex;
-      	int *dataCol = col + rowIndex;
-	      
-	      
-      	if (firstBlockRow) {
-	        
-        	if (i != 0)
-          	x_at_i -= *(data++) * x[*(dataCol++)];
-	        
-        	//x_at_i /= *data;
-	        
-      	} else {
-	      
-        	if (notFirstRow)
-          	x_at_i -= *(data++) * x[*(dataCol++)];
-        	x_at_i -= *(data++) * x[*(dataCol++)];
-	        
-        	//x_at_i /= *data; 
-      	}
-      	x[i] = x_at_i;
-    	}  
-	  }
-	}
-}
-
-
-void jacobiUpperHalfSync(SparseMatrix *I, const int iterations, double *b, double *x) {
-      
-  int n = I->n;
-  int nBlock = I->nBlock;
-  
-  double *val = I->valILU;
-  int valSize = I->valSize;
-  int *col = I->col;
-  int *row = I->row;
-  int rowSize = I->rowSize;
-  
-  
-  #pragma omp parallel
-  {
-	  for (int m = 0; m < iterations; m++) {
-    	
-	    #pragma omp for schedule(static)
-	    for (int i = 0; i < n; i++) {
-      	
-	      bool firstBlockRow = (i < nBlock);
-	      bool notFirstRow = (i % nBlock != 0);
-	      bool lastBlockRow = (i >= n - nBlock);
-	      bool notLastRow = (i % nBlock != nBlock - 1);
-	      int rowIndex = row[i];
-	      double x_at_i = b[i];
-	      double *data;
-	      int *dataCol;
-      	
-	
-	      // calculate where the diagonal element is located
-	      int offsetUpper = 0;
-	
-	      if (firstBlockRow) {
-	
-	        if (i != 0)
-	          offsetUpper = 1;
-	
-	      } else {
-	
-	        offsetUpper = 1;
-	        if (notFirstRow)
-	          offsetUpper = 2;
-	      }
-	
-	      data = val + rowIndex + offsetUpper;
-	      dataCol = col + rowIndex + offsetUpper + 1;
-	
-	      // store diagonal Value for division
-	      double diagVal = *(data++);
-	
-	      if (lastBlockRow) {
-        	
-	        if (notLastRow)
-	          x_at_i -= *(data++) * x[*(dataCol++)];
-        	
-	        x_at_i /= diagVal;
-        	
-	      } else {
-      	
-	        if (notLastRow)
-	          x_at_i -= *(data++) * x[*(dataCol++)];
-	        x_at_i -= *(data++) * x[*(dataCol++)];
-        	
-	        x_at_i /= diagVal; 
-	      }
-	      x[i] = x_at_i;
-	    }  
-  	}
   }
 }
 
@@ -467,7 +582,7 @@ void jacobiUpperAsync(SparseMatrix *I, const int iterations, double *b, double *
   	for (int m = 0; m < iterations; m++) {
 	    
     	#pragma omp for schedule(static) nowait
-    	for (int i = 0; i < n; i++) {
+    	for (int i = n - 1; i >= 0; i--) {
 	      
       	bool firstBlockRow = (i < nBlock);
       	bool notFirstRow = (i % nBlock != 0);
@@ -521,6 +636,7 @@ void jacobiUpperAsync(SparseMatrix *I, const int iterations, double *b, double *
 	}
 }
 
+
 double computeResidualLower(SparseMatrix* I, double *b, double *x, double *residual) {
       
   int n = I->n;
@@ -567,6 +683,7 @@ double computeResidualLower(SparseMatrix* I, double *b, double *x, double *resid
 
   return norm;
 }
+
 
 double computeResidualUpper(SparseMatrix* I, double *b, double *x, double *residual) {
       
@@ -708,7 +825,7 @@ void simpleJacobiUpper(SparseMatrix* I, const int iterations, double *b, double 
 
   for(int m = 0; m < iterations; m++) {
 
-    for(int i = 0; i < I->n; i++) {
+    for(int i = I->n - 1; i >= 0; i--) {
       x[i] = b[i];
 
       for(int j = 0; j < I->n; j++) {
@@ -717,13 +834,7 @@ void simpleJacobiUpper(SparseMatrix* I, const int iterations, double *b, double 
           x[i] -= I->getUpperILUValAt(i,j) * x0[j];
         }
       }
-      std::cout << "befor division: " << x[i] << "\n";
       x[i] /= I->getUpperILUValAt(i,i); 
-    }
-
-    for(int i = 0; i < I->n; i++) {
-      x0[i] = x[i];
-      std::cout << "new_x: " << x[i] << "\n";
     }
 
     act = simpleResidualUpper(I, b, x, res);
@@ -787,4 +898,126 @@ double simpleResidualUpper(SparseMatrix *I, double *b, double *x, double *residu
   double norm = epsilonfem::EFEM_BLAS::dnrm2 (I->n, residual, 1); 
 
   return norm;
+}
+
+
+// fully syncronized jacobi version with concurrent access to x
+void jacobiLowerHalfSync(SparseMatrix *I, const int iterations, double *b, double *x) {
+      
+  int n = I->n;
+  int nBlock = I->nBlock;
+  
+  double *val = I->valILU;
+  int valSize = I->valSize;
+  int *col = I->col;
+  int *row = I->row;
+  int rowSize = I->rowSize;
+  
+  
+  #pragma omp parallel
+  {
+    for (int m = 0; m < iterations; m++) {
+      
+      #pragma omp for schedule(static)
+      for (int i = 0; i < n; i++) {
+        
+        bool firstBlockRow = (i < nBlock);
+        bool notFirstRow = (i % nBlock != 0);
+        int rowIndex = row[i];
+        double x_at_i = b[i];
+        double *data = val + rowIndex;
+        int *dataCol = col + rowIndex;
+        
+        
+        if (firstBlockRow) {
+          
+          if (i != 0)
+            x_at_i -= *(data++) * x[*(dataCol++)];
+          
+          //x_at_i /= *data;
+          
+        } else {
+        
+          if (notFirstRow)
+            x_at_i -= *(data++) * x[*(dataCol++)];
+          x_at_i -= *(data++) * x[*(dataCol++)];
+          
+          //x_at_i /= *data; 
+        }
+        x[i] = x_at_i;
+      }  
+    }
+  }
+}
+
+
+void jacobiUpperHalfSync(SparseMatrix *I, const int iterations, double *b, double *x) {
+      
+  int n = I->n;
+  int nBlock = I->nBlock;
+  
+  double *val = I->valILU;
+  int valSize = I->valSize;
+  int *col = I->col;
+  int *row = I->row;
+  int rowSize = I->rowSize;
+  
+  
+  #pragma omp parallel
+  {
+    for (int m = 0; m < iterations; m++) {
+      
+      #pragma omp for schedule(static)
+      for (int i = n -1; i >= 0; i--) {
+        
+        bool firstBlockRow = (i < nBlock);
+        bool notFirstRow = (i % nBlock != 0);
+        bool lastBlockRow = (i >= n - nBlock);
+        bool notLastRow = (i % nBlock != nBlock - 1);
+        int rowIndex = row[i];
+        double x_at_i = b[i];
+        double *data;
+        int *dataCol;
+        
+  
+        // calculate where the diagonal element is located
+        int offsetUpper = 0;
+  
+        if (firstBlockRow) {
+  
+          if (i != 0)
+            offsetUpper = 1;
+  
+        } else {
+  
+          offsetUpper = 1;
+          if (notFirstRow)
+            offsetUpper = 2;
+        }
+  
+        data = val + rowIndex + offsetUpper;
+        dataCol = col + rowIndex + offsetUpper + 1;
+  
+        // store diagonal Value for division
+        double diagVal = *(data++);
+  
+        if (lastBlockRow) {
+          
+          if (notLastRow)
+            x_at_i -= *(data++) * x[*(dataCol++)];
+          
+          x_at_i /= diagVal;
+          
+        } else {
+        
+          if (notLastRow)
+            x_at_i -= *(data++) * x[*(dataCol++)];
+          x_at_i -= *(data++) * x[*(dataCol++)];
+          
+          x_at_i /= diagVal; 
+        }
+        x[i] = x_at_i;
+      }  
+    }
+  }
 }

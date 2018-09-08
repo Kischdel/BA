@@ -1,7 +1,11 @@
 #ifndef JACOBI_PAR_H
 #define JACOBI_PAR_H
 
-void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*lower)(const int, const int, const int, double*, double*, int*, int*, double*));
+
+void jacobiLowerDyn(SparseMatrix *I, const int iterations, double *b, double *x, int asyncBlockCount);
+void jacobiUpperDyn(SparseMatrix *I, const int iterations, double *b, double *x, int asyncBlockCount);
+
+void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*lower)(const int, const int, const int, double*, double*, int*, int*, double*), int asyncBlockCount);
 
 void lowerLine(const int lineIndex, const int nBlock, const int n, double *b, double *x, int *row, int *col, double *val);
 void upperLine(const int lineIndex, const int nBlock, const int n, double *b, double *x, int *row, int *col, double *val);

@@ -3,7 +3,11 @@
 
 typedef struct resultFGMRES {
   int restart, iter, steps, restarts;
-  double time, timeJacobi, averageTimeJacobi, timeFgmres, averageTimeFgmres;
+  double time, timeJacobiLower, timeJacobiUpper;
+  double averageTimeJacobiLower, averageTimeJacobiUpper;
+  double timeFgmres, averageTimeFgmres;
+  double averageNormJacobiLower, averageNormJacobiUpper;
+
 } resultFGMRES;
 
 
