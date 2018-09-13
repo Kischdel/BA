@@ -6,7 +6,7 @@
 #include "jacobi_par.h"
 
 
-// "dynamic" blockasynchron jacobi
+// "dynamic" blockasynchron jacobi with way to much overhead
 void jacobiLowerDyn(SparseMatrix *I, const int iterations, double *b, double *x, int asyncBlockCount) {
 
   // initialize parameters
@@ -121,7 +121,7 @@ void jacobiLowerDyn(SparseMatrix *I, const int iterations, double *b, double *x,
           }
           */
 
-          if (teamsFinished >= numTeams / 2) {
+          if (teamsFinished >= numTeams / 3) {
 
             proceedToNextSection = true;
           }
@@ -174,7 +174,7 @@ void jacobiLowerDyn(SparseMatrix *I, const int iterations, double *b, double *x,
 
 
 // teaming with syncronisation while redistributing teams
-void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*func)(const int, const int, const int, double*, double*, int*, int*, double*), int asyncBlockCount) {
+void jacobi(SparseMatrix *I, double *b, double *x, void (*func)(const int, const int, const int, double*, double*, int*, int*, double*), int secNum, int *secConf, int *secIter) {
   
   // initialize parameters
   int n = I->n;
@@ -186,35 +186,33 @@ void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*
   int *row = I->row;
   int rowSize = I->rowSize;
 
-  // parameter for y tmp vector
-  // double *y = new double[n] {};
+  // parameter for y tmp vector //only needed for inline norm computation
+  //double *y = new double[n] {};
 
   // initialize OMP parameter
   omp_set_nested(1);
   int maxThreadCount = omp_get_max_threads();
 	//std::cout << "maxThreadCount: " << maxThreadCount << std::endl;
 
-	// this part is hardcoded for the testmachine it may not work well on other setups
-  int sections = 1;
-  int iterSections = iterations;
-	int teams[sections] = {6}; //, 3, 8, 24};
-  // temp for manuell block asyncronus execution without Blockrestructuration
-  teams[0] = asyncBlockCount;
+  // initialize abort condition
+  int teamsFinished = 0;
+  bool proceedToNextSection = false;
+  int iterationsPerTeam[maxThreadCount] = {};
 
   // for every section
-  for(int i = 0; i < sections; i++)
+  for(int i = 0; i < secNum; i++)
   {
     
     // split into teams
-    #pragma omp parallel num_threads(teams[i])
+    #pragma omp parallel num_threads(secConf[i])
     {
 
       int parent_tid = omp_get_thread_num();
       int threads = omp_get_num_threads(); 
 
-      int chunkRest = n % teams[i];
+      int chunkRest = n % secConf[i];
       int tidOffset = threads - chunkRest;
-      int chunkSize = n / teams[i];
+      int chunkSize = n / secConf[i];
   
       int start;
       int end;
@@ -232,7 +230,7 @@ void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*
         end = start + chunkSize;
       }
 
-	 		int threadsPerTeam = maxThreadCount / teams[i];
+	 		int threadsPerTeam = maxThreadCount / secConf[i];
   
       /*
 	 		#pragma omp critical
@@ -240,14 +238,13 @@ void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*
 	 			std::cout << "tid: " << parent_tid << " threads_active: " << threads;
 	 			std::cout << " start: " << start << " stop: " << end << std::endl;
 	 		}
-
+      
   
 	 		#pragma omp barrier
       */
 
       //iterations in jacobi per section
-      for (int j = 0; j < iterSections; j++)
-      {
+      do {
         //create child threads in each team to solve lines
         if (func == &lowerLine) {
           #pragma omp parallel for num_threads(threadsPerTeam)
@@ -257,7 +254,7 @@ void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*
             #pragma omp critical
             {
               std::cout << "tid: " << parent_tid << " / " << omp_get_thread_num() << " threads_active: " << omp_get_num_threads();
-              std::cout << " iter: " << j;
+              std::cout << " iter: " << iterationsPerThread[parent_tid];
               std::cout << " line: " << k << std::endl;
             }
             */
@@ -280,23 +277,62 @@ void jacobi(SparseMatrix *I, const int iterations, double *b, double *x, void (*
           }
         }
         
-      }
+        iterationsPerTeam[parent_tid]++;
+
+        /*
+        #pragma omp critical
+        {
+            std::cout << "tid: " << parent_tid << " iterations executed " << iterationsPerTeam[parent_tid] << std::endl;
+        }
+        */
+
+        // update thread iter count and check if min iterations reached
+        if (iterationsPerTeam[parent_tid] == secIter[i]) {
+
+          #pragma omp atomic
+          teamsFinished++;
+
+          /*
+          #pragma omp critical
+          {
+            std::cout << "tid: " << parent_tid << " teamsFinished: " << teamsFinished << std::endl;
+          }
+          */
+
+          if (teamsFinished >= secConf[i] / 3) {
+
+            proceedToNextSection = true;
+            /*
+            #pragma omp critical
+            {
+              std::cout << "tid: " << parent_tid << " abort section" << std::endl;
+            }
+            */
+          }
+        }
+
+      } while (!proceedToNextSection);
       
       //#pragma omp barrier
 
-      /*
-      #pragma omp single
-      {
-        if(func == &lowerLine)
-          std::cout << "section: " << i << " normLower: " << computeResidualLower(I, b, x, y) << "\n";
-        else
-          std::cout << "section: " << i << " normUpper: " << computeResidualUpper(I, b, x, y) << "\n";
-      }
-      */
+    iterationsPerTeam[parent_tid] = 0;
 
     } //end #pragma parallel 
+
+    // reset parameter
+    proceedToNextSection = false;
+    teamsFinished = 0;
+
+    /* inline residuum
+    if(func == &lowerLine)
+      std::cout << "section: " << i << " normLower: " << computeResidualLower(I, b, x, y) << "\n";
+    else
+      std::cout << "section: " << i << " normUpper: " << computeResidualUpper(I, b, x, y) << "\n";
+    */
+
   } //end for section
   
+  omp_set_nested(0);
   //free memory
   //delete[] y;
 }
@@ -316,7 +352,7 @@ void lowerLine(const int lineIndex, const int nBlock, const int n, double *b, do
   if (firstBlockRow) {
 	   
    	if (lineIndex != 0)
-     	x_at_lineIndex -= *(data++) * x[*(dataCol++)];
+     	x_at_lineIndex -= *data * x[*dataCol];
 	       
     	//x_at_i /= *data;	// not needed, because the lower diagonal is 1
 	        
@@ -324,7 +360,7 @@ void lowerLine(const int lineIndex, const int nBlock, const int n, double *b, do
 	      
    	if (notFirstRow)
      	x_at_lineIndex -= *(data++) * x[*(dataCol++)];
-   	x_at_lineIndex -= *(data++) * x[*(dataCol++)];
+   	x_at_lineIndex -= *data * x[*dataCol];
 	        
    	//x_at_i /= *data;  // not needed, because the lower diagonal is 1
   }
@@ -368,7 +404,7 @@ void upperLine(const int lineIndex, const int nBlock, const int n, double *b, do
 	if (lastBlockRow) {
         	
 	  if (notLastRow)
-	    x_at_lineIndex -= *(data++) * x[*(dataCol++)];
+	    x_at_lineIndex -= *data * x[*dataCol];
         	
 	  x_at_lineIndex /= diagVal;
         	
@@ -376,11 +412,62 @@ void upperLine(const int lineIndex, const int nBlock, const int n, double *b, do
       	
 	  if (notLastRow)
 	    x_at_lineIndex -= *(data++) * x[*(dataCol++)];
-	  x_at_lineIndex -= *(data++) * x[*(dataCol++)];
+	  x_at_lineIndex -= *data * x[*dataCol];
         	
 	  x_at_lineIndex /= diagVal; 
 	}
 	x[lineIndex] = x_at_lineIndex;
+}
+
+void upperLineExperimental(const int lineIndex, const int nBlock, const int n, double *b, double *x, int *row, int *col, double *val) {
+
+  bool firstBlockRow = (lineIndex < nBlock);
+  bool notFirstRow = (lineIndex % nBlock != 0);
+  bool lastBlockRow = (lineIndex >= n - nBlock);
+  bool notLastRow = (lineIndex % nBlock != nBlock - 1);
+  int rowIndex = row[lineIndex];
+  double x_at_lineIndex = b[lineIndex];
+  double *data;
+  int *dataCol;
+        
+  
+  // calculate where the diagonal element is located
+  int offsetUpper = 0;
+  
+  if (firstBlockRow) {
+  
+    if (lineIndex != 0)
+      offsetUpper = 1;
+  
+  } else {
+  
+    offsetUpper = 1;
+    if (notFirstRow)
+      offsetUpper = 2;
+  }
+  
+  data = val + rowIndex + offsetUpper;
+  dataCol = col + rowIndex + offsetUpper + 1;
+  
+  // store diagonal Value for division
+  double diagVal = *(data++);
+  
+  if (lastBlockRow) {
+          
+    if (notLastRow)
+      x_at_lineIndex -= *(data++) * x[*(dataCol++)];
+          
+    x_at_lineIndex /= diagVal;
+          
+  } else {
+        
+    if (notLastRow)
+      x_at_lineIndex -= *(data++) * x[*(dataCol++)];
+    x_at_lineIndex -= *(data++) * x[*(dataCol++)];
+          
+    x_at_lineIndex /= diagVal; 
+  }
+  x[lineIndex] = x_at_lineIndex;
 }
 
 
@@ -414,7 +501,7 @@ void jacobiLowerSync(SparseMatrix *I, const int iterations, double *b, double *x
         if (firstBlockRow) {
           
           if (i != 0)
-            x_at_i -= *(data++) * x0[*(dataCol++)];
+            x_at_i -= *data * x0[*dataCol];
           
           //x_at_i /= *data;
           
@@ -422,7 +509,7 @@ void jacobiLowerSync(SparseMatrix *I, const int iterations, double *b, double *x
         
           if (notFirstRow)
             x_at_i -= *(data++) * x0[*(dataCol++)];
-          x_at_i -= *(data++) * x0[*(dataCol++)];
+          x_at_i -= *data * x0[*dataCol];
           
           //x_at_i /= *data; 
         }
@@ -491,7 +578,7 @@ void jacobiUpperSync(SparseMatrix *I, const int iterations, double *b, double *x
         if (lastBlockRow) {
           
           if (notLastRow)
-            x_at_i -= *(data++) * x0[*(dataCol++)];
+            x_at_i -= *data * x0[*dataCol];
           
           x_at_i /= diagVal;
           
@@ -499,7 +586,7 @@ void jacobiUpperSync(SparseMatrix *I, const int iterations, double *b, double *x
         
           if (notLastRow)
             x_at_i -= *(data++) * x0[*(dataCol++)];
-          x_at_i -= *(data++) * x0[*(dataCol++)];
+          x_at_i -= *data * x0[*dataCol];
           
           x_at_i /= diagVal; 
         }
@@ -546,7 +633,7 @@ void jacobiLowerAsync(SparseMatrix *I, const int iterations, double *b, double *
       	if (firstBlockRow) {
 	        
         	if (i != 0)
-          	x_at_i -= *(data++) * x[*(dataCol++)];
+          	x_at_i -= *data * x[*dataCol];
 	        
         	//x_at_i /= *data;
 	        
@@ -554,7 +641,7 @@ void jacobiLowerAsync(SparseMatrix *I, const int iterations, double *b, double *
 	      
         	if (notFirstRow)
           	x_at_i -= *(data++) * x[*(dataCol++)];
-        	x_at_i -= *(data++) * x[*(dataCol++)];
+        	x_at_i -= *data * x[*dataCol];
 	        
         	//x_at_i /= *data; 
       	}
@@ -618,7 +705,7 @@ void jacobiUpperAsync(SparseMatrix *I, const int iterations, double *b, double *
       	if (lastBlockRow) {
 	        
         	if (notLastRow)
-          	x_at_i -= *(data++) * x[*(dataCol++)];
+          	x_at_i -= *data * x[*dataCol];
 	        
         	x_at_i /= diagVal;
 	        
@@ -626,7 +713,7 @@ void jacobiUpperAsync(SparseMatrix *I, const int iterations, double *b, double *
 	      
         	if (notLastRow)
           	x_at_i -= *(data++) * x[*(dataCol++)];
-        	x_at_i -= *(data++) * x[*(dataCol++)];
+        	x_at_i -= *data * x[*dataCol];
 	        
         	x_at_i /= diagVal; 
       	}
@@ -932,7 +1019,7 @@ void jacobiLowerHalfSync(SparseMatrix *I, const int iterations, double *b, doubl
         if (firstBlockRow) {
           
           if (i != 0)
-            x_at_i -= *(data++) * x[*(dataCol++)];
+            x_at_i -= *data * x[*dataCol];
           
           //x_at_i /= *data;
           
@@ -940,7 +1027,7 @@ void jacobiLowerHalfSync(SparseMatrix *I, const int iterations, double *b, doubl
         
           if (notFirstRow)
             x_at_i -= *(data++) * x[*(dataCol++)];
-          x_at_i -= *(data++) * x[*(dataCol++)];
+          x_at_i -= *data * x[*dataCol];
           
           //x_at_i /= *data; 
         }
@@ -1004,7 +1091,7 @@ void jacobiUpperHalfSync(SparseMatrix *I, const int iterations, double *b, doubl
         if (lastBlockRow) {
           
           if (notLastRow)
-            x_at_i -= *(data++) * x[*(dataCol++)];
+            x_at_i -= *data * x[*dataCol];
           
           x_at_i /= diagVal;
           
@@ -1012,7 +1099,7 @@ void jacobiUpperHalfSync(SparseMatrix *I, const int iterations, double *b, doubl
         
           if (notLastRow)
             x_at_i -= *(data++) * x[*(dataCol++)];
-          x_at_i -= *(data++) * x[*(dataCol++)];
+          x_at_i -= *data * x[*dataCol];
           
           x_at_i /= diagVal; 
         }

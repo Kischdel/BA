@@ -10,5 +10,15 @@ typedef struct resultFGMRES {
 
 } resultFGMRES;
 
+typedef struct resultJacobi {
+  int sections;
+  int *sectionsConf;
+  int *sectionsIter;
+  double averageTimeJacobiLower, averageTimeJacobiUpper;
+  double averageNormJacobiLower, averageNormJacobiUpper;
+  double maxNormJacobiLower, minNormJacobiLower;
+  double maxNormJacobiUpper, minNormJacobiUpper;
+
+} resultJacobi;
 
 #endif //RESULT_H

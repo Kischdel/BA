@@ -1,11 +1,12 @@
 #include <iostream>
-#include <stdio.h>
-#include <stdlib.h>
+//#include <stdio.h>
+//#include <stdlib.h>
 #include <fstream>
 #include <string>
 #include <sstream>
 #include <vector>
 #include <chrono>
+#include <cmath>
 #include <omp.h>
 #include "blas.h"
 #include "parex.h"
@@ -13,6 +14,7 @@
 #include "jacobi_par.h"
 #include "CSR_Solver.h"
 #include "result.h"
+#include "preconditioner.h"
 
 void printVector(std::string s, int n, const double *v) {
   std::cout << s << "\n";
@@ -61,12 +63,44 @@ void writeResult(std::ofstream *file, resultFGMRES *res) {
   file->flush();
 }
 
+// write Result from result struct to logfile
+void writeJacobiResult(std::ofstream *file, resultJacobi *res) {
+
+  *file << res->sections << ";";
+
+  for (int i = 0; i < res->sections; i++) {
+    if (i == 0) *file << res->sectionsConf[i];
+    else *file << "," << res->sectionsConf[i];
+  }
+
+  *file << ";";
+
+  for (int i = 0; i < res->sections; i++) {
+    if (i == 0) *file << res->sectionsIter[i];
+    else *file << "," << res->sectionsIter[i];
+  }
+
+  *file << ";";
+  *file << res->averageNormJacobiLower << ";";
+  *file << res->averageNormJacobiUpper << ";";
+  *file << res->minNormJacobiLower << ";";
+  *file << res->maxNormJacobiLower << ";";
+  *file << res->minNormJacobiUpper << ";";
+  *file << res->maxNormJacobiUpper << ";";
+  *file << res->averageTimeJacobiLower << ";";
+  *file << res->averageTimeJacobiUpper << ";";
+  
+  *file << "\n";
+  file->flush();
+}
+
 
 int main(int argc, char *argv[]) {
   
   // initilization
   epsilonfem::CSR_Solver *solver = new epsilonfem::CSR_Solver();
   SparseMatrix *A;
+  Preconditioner *preCond;
   double tol = 1.0e-09;
   bool running = true;
 
@@ -119,6 +153,10 @@ int main(int argc, char *argv[]) {
           A = new SparseMatrix(filename);
         }
         break;
+
+      // load Preconditioner
+      //case 3:
+
 
       // solve the computed/loaded matrix with FGMRES
       case 3:
@@ -276,173 +314,228 @@ int main(int argc, char *argv[]) {
         	// initialize dimensions
           int nBlock = A->nBlock;
           int n = A->n;
+
+          // setup logging
+          std::ostringstream buildfilename;
+          buildfilename << "./log/jacobi_Blocksize_";
+          buildfilename << nBlock;
+          buildfilename << ".txt";
+          std::string filename = buildfilename.str(); 
+
+          std::ofstream myfile;
+          myfile.open(filename.c_str(), std::ios_base::app);
+
+          if (myfile.is_open()) {
+
+            /*// initialize iterations
+            int iterations;
+            std::cout << "choose jacobi iterations:\n";
+            std::cin >> iterations;
+            */
+  
+            // init section count
+            int sections;
+            std::cout << "choose jacobi sections:\n";
+            std::cin >> sections;
+  
+            // init async block count
+            int jacobiAsyncBlockCount[sections];
+            int secIter[sections];
+            for (int i = 0; i < sections; i++) {
+              
+              std::cout << "choose Async Block count for section: " << i << "\n";
+              std::cin >> jacobiAsyncBlockCount[i];
+  
+              std::cout << "choose iteration count for section: " << i << "\n";
+              std::cin >> secIter[i];          
+            }
           
-          // initialize iterations
-          int iterationsLower;
-          int iterationsUpper;
-          std::cout << "choose lower jacobi iterations:\n";
-          std::cin >> iterationsLower;
-          std::cout << "choose upper jacobi iterations:\n";
-          std::cin >> iterationsUpper;
-
-          // init async block count
-          int jacobiAsyncBlockCount;
-					std::cout << "choose Async Block Count:\n";
-          std::cin >> jacobiAsyncBlockCount;          
-
-          // initialize iterations
-          int executions = 1;
-          std::cout << "choose execution count:\n";
-          std::cin >> executions;
-
-          // compute right side
-          double *b = new double[n] {};
-          calculateB(nBlock, b);
-    
-          // allocate and initialize x0, y, r and s
-          double *x = new double[n] {}; // initial guess
-          double *y = new double[n] {}; // temp for residual and jacobi version without concurrent access
-          double *r = new double[n] {}; // rigth side like in first FGMRES iteration
-          double *s = new double[n] {}; // store result between lower and upper 
-
-          // allocate experimental vectors
-          double *one = new double[n] {};
-          double *gUz = new double[n] {};
-          double *gLz = new double[n] {};
-
-          for(int i = 0; i < n; i++) {
-          	one[i] = 1;
-          }
-
-          // compute vector from first FGMRES iteration
-          //i dont know if this is a good test
-          const char transpose = 'n';
-          epsilonfem::EFEM_BLAS::dcsrgemv(&transpose, &n, A->val, A->row, A->col, x, r);
-          epsilonfem::EFEM_BLAS::daxpy (n, -1, b, 1, r, 1);
-          double g = epsilonfem::EFEM_BLAS::dnrm2 (n, r, 1);
-          epsilonfem::EFEM_BLAS::dscal (n, 1.0/g, r, 1);
-          
-
-          //messuring execution time
-    			std::vector<std::chrono::high_resolution_clock::time_point> jacobi_start;
-    			std::vector<std::chrono::high_resolution_clock::time_point> jacobi_between;
-    			std::vector<std::chrono::high_resolution_clock::time_point> jacobi_stop;
-
-    
-					//setup preconditioning accuracy messurement
-    			std::vector<double> normLower;
-    			std::vector<double> normUpper;
-
-          //pointer to upper and lower
-          void (*lower)(const int, const int, const int, double*, double*, int*, int*, double*) = &lowerLine;
-          void (*upper)(const int, const int, const int, double*, double*, int*, int*, double*) = &upperLine;
+            // initialize iterations
+            int executions = 1;
+            std::cout << "choose execution count:\n";
+            std::cin >> executions;
+  
+            // compute right side
+            double *b = new double[n] {};
+            calculateB(nBlock, b);
+      
+            // allocate and initialize x0, y, r and s
+            double *x = new double[n] {}; // initial guess
+            double *y = new double[n] {}; // temp for residual and jacobi version without concurrent access
+            double *r = new double[n] {}; // rigth side like in first FGMRES iteration
+            double *s = new double[n] {}; // store result between lower and upper 
+  
+            // allocate experimental vectors
+            double *one = new double[n] {};
+            double *gUz = new double[n] {};
+            double *gLz = new double[n] {};
+  
+            for(int i = 0; i < n; i++) {
+              one[i] = 1;
+            }
+  
+            // compute vector from first FGMRES iteration
+            //i dont know if this is a good test
+            const char transpose = 'n';
+            epsilonfem::EFEM_BLAS::dcsrgemv(&transpose, &n, A->val, A->row, A->col, x, r);
+            epsilonfem::EFEM_BLAS::daxpy (n, -1, b, 1, r, 1);
+            double g = epsilonfem::EFEM_BLAS::dnrm2 (n, r, 1);
+            epsilonfem::EFEM_BLAS::dscal (n, 1.0/g, r, 1);
+            
+  
+            //messuring execution time
+            std::vector<std::chrono::high_resolution_clock::time_point> jacobi_start;
+            std::vector<std::chrono::high_resolution_clock::time_point> jacobi_between;
+            std::vector<std::chrono::high_resolution_clock::time_point> jacobi_stop;
+  
+      
+            //setup preconditioning accuracy messurement
+            std::vector<double> normLower;
+            std::vector<double> normUpper;
+  
+            //pointer to upper and lower
+            void (*lower)(const int, const int, const int, double*, double*, int*, int*, double*) = &lowerLine;
+            void (*upper)(const int, const int, const int, double*, double*, int*, int*, double*) = &upperLine;
          
 
+            // initialize resultStruct for logging
+            resultJacobi res;
+            res.sections = sections;
+            res.sectionsConf = jacobiAsyncBlockCount;
+            res.sectionsIter = secIter;
+                                                
 
-          // repeat jacobi execution
-          for(int i = 0; i < executions; i++) {
+            // repeat jacobi execution
+            for(int i = 0; i < executions; i++) {
+  
+              // check what norm is with initial guess
+              //std::cout << "norm Lower befor: " << computeResidualLower(A, one, gLz, y) << "\n";
+              //std::cout << "norm Upper befor: " << computeResidualLower(A, one, gUz, y) << "\n";
+  
+              // start Time messurement
+              jacobi_start.push_back(std::chrono::high_resolution_clock::now());
+  
+              // lower jacobi
+              //jacobiLowerSync(A, iterationsLower, one, gLz, y);
+              //jacobiLowerHalfSync(A, iterationsLower, one, gLz);
+              //jacobiLowerAsync(A, iterationsLower, r, s);
+              jacobi(A, one, gLz, &lowerLine, sections, jacobiAsyncBlockCount, secIter);
+              //jacobiLowerDyn(A, iterationsLower, one, gLz, jacobiAsyncBlockCount);
+  
+            
+              // checkpoint for time mesuurement
+              jacobi_between.push_back(std::chrono::high_resolution_clock::now());
+  
+  
+              // check what norm is with initial guess
+              //std::cout << "norm befor: " << computeResidualUpper(A, s, x, y) << "\n";
+  
+              // upper jacobi
+              //jacobiUpperSync(A, iterationsUpper, one, gUz, y);
+              //jacobiUpperHalfSync(A, iterationsUpper, one, gUz);
+              //jacobiUpperAsync(A, iterationsUpper, s, x);
+              jacobi(A, one, gUz, &upperLine, sections, jacobiAsyncBlockCount, secIter);  
 
-          	// check what norm is with initial guess
-          	//std::cout << "norm Lower befor: " << computeResidualLower(A, one, gLz, y) << "\n";
-          	//std::cout << "norm Upper befor: " << computeResidualLower(A, one, gUz, y) << "\n";
+            
+              // end Time messurement
+              jacobi_stop.push_back(std::chrono::high_resolution_clock::now());
 
-						// start Time messurement
-          	jacobi_start.push_back(std::chrono::high_resolution_clock::now());
+              // calculate norm
+              normLower.push_back(computeResidualLower(A, one, gLz, y));
+              normUpper.push_back(computeResidualUpper(A, one, gUz, y));
+  
+  
+              delete[] gLz;
+              delete[] gUz;
+  
+              delete[] s;
+              delete[] x;
+              s = new double[n] {};
+              x = new double[n] {};
+              gLz = new double[n] {};
+              gUz = new double[n] {};
+              //std::cout << "\n";
+            }
+  
+            //calculate times
+            auto duration_jacobi_lower = 0;
+            auto duration_jacobi_upper = 0;
+  
+            //calculate average norm of jacobi
+            double sum_norm_lower = 0;
+            double sum_norm_upper = 0;
+            double norm_lower_max = 0;
+            double norm_lower_min = nBlock;
+            double norm_upper_max = 0;
+            double norm_upper_min = nBlock;
+            
+            for (int i = 0; i < jacobi_start.size(); i++) {
+              auto diff_lower = std::chrono::duration_cast<std::chrono::microseconds>(jacobi_between.at(i) - jacobi_start.at(i)).count();
+              auto diff_upper = std::chrono::duration_cast<std::chrono::microseconds>(jacobi_stop.at(i) - jacobi_between.at(i)).count();
+              duration_jacobi_lower += diff_lower;
+              duration_jacobi_upper += diff_upper;
+              std::cout << (double)diff_lower / 1000000 << " ";
+              std::cout << (double)diff_upper / 1000000 << " ";
+  
+              sum_norm_lower += normLower.at(i);
+              sum_norm_upper += normUpper.at(i);
+  
+              if (normLower.at(i) > norm_lower_max) norm_lower_max = normLower.at(i);
+              if (normLower.at(i) < norm_lower_min) norm_lower_min = normLower.at(i);
+              if (normUpper.at(i) > norm_upper_max) norm_upper_max = normUpper.at(i);
+              if (normUpper.at(i) < norm_upper_min) norm_upper_min = normUpper.at(i);
+  
+              std::cout << normLower.at(i) << " ";
+              std::cout << normUpper.at(i) << "\n";
+            }
+    
+            //store results in result struct TODO
+            double averageExecTimeLower = ((double)duration_jacobi_lower / executions) / 1000000;
+            double averageExecTimeUpper = ((double)duration_jacobi_upper / executions) / 1000000;
+            double averageNormJacobiLower = sum_norm_lower / executions;
+            double averageNormJacobiUpper = sum_norm_upper / executions;
+  
+            res.averageTimeJacobiLower = averageExecTimeLower;
+            res.averageTimeJacobiUpper = averageExecTimeUpper;
+            res.averageNormJacobiLower = averageNormJacobiLower;
+            res.averageNormJacobiUpper = averageNormJacobiUpper;
+            res.maxNormJacobiLower = norm_lower_max;
+            res.minNormJacobiLower = norm_lower_min;
+            res.maxNormJacobiUpper = norm_upper_max;
+            res.minNormJacobiUpper = norm_upper_min;
 
-          	// lower jacobi
-          	//jacobiLowerSync(A, iterationsLower, one, gLz, y);
-          	jacobiLowerHalfSync(A, iterationsLower, one, gLz);
-          	//jacobiLowerAsync(A, iterationsLower, r, s);
-          	//jacobi(A, iterationsLower, one, gLz, lower, jacobiAsyncBlockCount);
-            jacobiLowerDyn(A, iterationsLower, one, gLz, jacobiAsyncBlockCount);
+            // write result to logfile
+            writeJacobiResult(&myfile, &res);
 
-          
+            //console output
+            //std::cout << "iterL: " << iterations;
+            std::cout << " exec: " << executions << " / residualNorm: ";
+            std::cout << averageNormJacobiLower << " / ";
+            std::cout << averageNormJacobiUpper << " ; ";
+            std::cout << norm_lower_min << " / ";
+            std::cout << norm_lower_max << " ; ";
+            std::cout << norm_upper_min << " / ";
+            std::cout << norm_upper_max << "\n";
+            std::cout << "time: ";
+            std::cout << averageExecTimeLower << " / ";
+            std::cout << averageExecTimeUpper << "\n\n";
+  
+            // free memory
+            delete[] one;
+            delete[] gLz;
+            delete[] gUz;
+            delete[] b;
+            delete[] x;
+            delete[] y;
+            delete[] r;
+            delete[] s;
 
-          	// checkpoint for time mesuurement
-          	jacobi_between.push_back(std::chrono::high_resolution_clock::now());
-
-
-          	// check what norm is with initial guess
-          	//std::cout << "norm befor: " << computeResidualUpper(A, s, x, y) << "\n";
-
-          	// upper jacobi
-          	//jacobiUpperSync(A, iterationsUpper, one, gUz, y);
-          	//jacobiUpperHalfSync(A, iterationsUpper, one, gUz);
-          	//jacobiUpperAsync(A, iterationsUpper, s, x);
-          	//jacobi(A, iterationsUpper, one, gUz, upper, jacobiAsyncBlockCount);
-
-            jacobi(A, iterationsUpper, one, gUz, lower, jacobiAsyncBlockCount);
-
-
-
-          	// end Time messurement
-          	jacobi_stop.push_back(std::chrono::high_resolution_clock::now());
-
-
-          	// calculate norm
-          	normLower.push_back(computeResidualLower(A, one, gLz, y));
-          	//normUpper.push_back(computeResidualUpper(A, one, gUz, y));
-            normUpper.push_back(computeResidualLower(A, one, gUz, y));
-
-
-          	delete[] gLz;
-          	delete[] gUz;
-
-          	delete[] s;
-          	delete[] x;
-          	s = new double[n] {};
-          	x = new double[n] {};
-          	gLz = new double[n] {};
-          	gUz = new double[n] {};
-          	//std::cout << "\n";
+          } else {
+            std::cout << "file Error" << "\n";
           }
 
-
-					//calculate times
-    			auto duration_jacobi_lower = 0;
-    			auto duration_jacobi_upper = 0;
-
-    			//calculate average norm of jacobi
-			    double sum_norm_lower = 0;
-			    double sum_norm_upper = 0;
-    			
-    			for (int i = 0; i < jacobi_start.size(); i++) {
-    			  auto diff_lower = std::chrono::duration_cast<std::chrono::microseconds>(jacobi_between.at(i) - jacobi_start.at(i)).count();
-    			  auto diff_upper = std::chrono::duration_cast<std::chrono::microseconds>(jacobi_stop.at(i) - jacobi_between.at(i)).count();
-    			  duration_jacobi_lower += diff_lower;
-    			  duration_jacobi_upper += diff_upper;
-    			  std::cout << (double)diff_lower / 1000000 << " ";
-    			  std::cout << (double)diff_upper / 1000000 << " ";
-
-    			  sum_norm_lower += normLower.at(i);
-			      sum_norm_upper += normUpper.at(i);
-
-			      std::cout << normLower.at(i) << " ";
-			      std::cout << normUpper.at(i) << "\n";
-    			}
-  
-          //store results in result struct TODO
-    			double averageExecTimeLower = ((double)duration_jacobi_lower / executions) / 1000000;
-    			double averageExecTimeUpper = ((double)duration_jacobi_upper / executions) / 1000000;
-    			double averageNormJacobiLower = sum_norm_lower / executions;
-    			double averageNormJacobiUpper = sum_norm_upper / executions;
-
-          //console output
-          std::cout << "iterL: " << iterationsLower << " iterU: " << iterationsUpper;
-          std::cout << " exec: " << executions << " / residualNorm: ";
-          std::cout << averageNormJacobiLower << " / ";
-          std::cout << averageNormJacobiUpper << "\n";
-          std::cout << "time: ";
-          std::cout << averageExecTimeLower << " / ";
-          std::cout << averageExecTimeUpper << "\n\n";
-
-          // free memory
-          delete[] one;
-          delete[] b;
-          delete[] x;
-          delete[] y;
-          delete[] r;
-          delete[] s;
+          // end logging
+          myfile.close();
         }
         break;
 
@@ -450,32 +543,41 @@ int main(int argc, char *argv[]) {
       case 6:
         {
           
-          // initialize dimensions
-          int nBlock = A->nBlock;
-          int n = A->n;
+          bool lowerIsDiagonalDominant = true;
+          bool upperIsDiagonalDominant = true;
 
-          // init async block count
-          int jacobiAsyncBlockCount;
-          std::cout << "choose Async Block Count:\n";
-          std::cin >> jacobiAsyncBlockCount;  
+          //check diagonaldominance
+          #pragma omp parallel for
+          for (int i = 0; i < A->n; i++) {
+            double sum = 0;
+            //check L
+            for (int j = 0; j < i; j++) {
+              sum += fabs(A->getLowerILUValAt(i, j));
+            }
+            if (sum > 1) {
+              std::cout << "L not good in line: " << i << "\n";
+              lowerIsDiagonalDominant = false;
+            }
+            //else std::cout << "L good in line: " << i << " / " << sum << " < 1\n";
+            sum = 0;
 
-          // allocate experimental vectors
-          double *one = new double[n] {};
-          double *gUz = new double[n] {};
-          double *gLz = new double[n] {};
+            //check U
+            for (int j = i + 1; j < A->n; j++) {
+              sum += fabs(A->getUpperILUValAt(i, j));
+            }
+            if (sum > fabs(A->getUpperILUValAt(i, i))) {
+              std::cout << "U not good in line: " << i << "\n";
+              upperIsDiagonalDominant = false;
+            } 
+            //else std::cout << "U good in line: " << i << " / " << sum << " < " << fabs(A->getUpperILUValAt(i, i)) << "\n";
 
-          for(int i = 0; i < n; i++) {
-            one[i] = 1;
+            std::cout << "line: " << i << " / " << A->n << "\n";
           }
 
-          jacobiLowerDyn(A, 4, one, gLz, jacobiAsyncBlockCount);
-
-
-          delete[] one;
-          delete[] gLz;
-          delete[] gUz;
-          
-
+          if(lowerIsDiagonalDominant) std::cout << "L is Diagonaldominant\n";
+          else std::cout << "L is NOT Diagonaldominant\n";
+          if(upperIsDiagonalDominant) std::cout << "U is Diagonaldominant\n";
+          else std::cout << "U is NOT Diagonaldominant\n";
 
 
           /* // test barrier
@@ -527,35 +629,6 @@ int main(int argc, char *argv[]) {
             }
           }
           */
-
-        	/*//std::cout << "env " << std::getenv("OMP_NUM_THREADS") << "\n";
-        	std::cout << "maxthreads " << omp_get_max_threads() << "\n";
-
-        	#pragma omp parallel
-        	{
-
-        		#pragma omp single
-        		std::cout << "maxthreads " << omp_get_num_threads() << "\n";
-        	}
-        	*/
-
-
-          /* matrix multiplication
-          for(int i = 0; i < A->n; i++) {
-            for(int j = 0; j < A->n; j++) {
-
-              double val = 0;
-              
-              for(int k = 0; k < A->n; k++) {
-
-                val += A->getLowerILUValAt(i,k) * A->getUpperILUValAt(k,j);
-
-              }
-              std::cout << val << "\t";
-            }
-            std::cout << "\n";
-          }
-          */
         }
         break;
 
@@ -565,9 +638,8 @@ int main(int argc, char *argv[]) {
         break;
 
       default:
-        running = false;
+      std::cout << "not a valid case \n\n";
     }
   }
-
   return 0;
 }
