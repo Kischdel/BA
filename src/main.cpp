@@ -1,6 +1,4 @@
 #include <iostream>
-//#include <stdio.h>
-//#include <stdlib.h>
 #include <fstream>
 #include <string>
 #include <sstream>
@@ -64,23 +62,11 @@ void writeResult(std::ofstream *file, resultFGMRES *res) {
 }
 
 // write Result from result struct to logfile
-void writeJacobiResult(std::ofstream *file, resultJacobi *res) {
+void writeJacobiResult(std::ofstream *file, resultJacobi *res, Preconditioner *preCond) {
 
-  *file << res->sections << ";";
+  std::cout << preCond->getLogDesc() << "\n";
 
-  for (int i = 0; i < res->sections; i++) {
-    if (i == 0) *file << res->sectionsConf[i];
-    else *file << "," << res->sectionsConf[i];
-  }
-
-  *file << ";";
-
-  for (int i = 0; i < res->sections; i++) {
-    if (i == 0) *file << res->sectionsIter[i];
-    else *file << "," << res->sectionsIter[i];
-  }
-
-  *file << ";";
+  *file << preCond->getLogDesc() << ";";
   *file << res->averageNormJacobiLower << ";";
   *file << res->averageNormJacobiUpper << ";";
   *file << res->minNormJacobiLower << ";";
@@ -135,6 +121,7 @@ int main(int argc, char *argv[]) {
         }
         break;
 
+
       // load a previous computed matrix
       case 2:
         {
@@ -153,9 +140,6 @@ int main(int argc, char *argv[]) {
           A = new SparseMatrix(filename);
         }
         break;
-
-      // load Preconditioner
-      //case 3:
 
 
       // solve the computed/loaded matrix with FGMRES
@@ -198,6 +182,7 @@ int main(int argc, char *argv[]) {
 	
           	std::cout << "choose jacobi iterations:\n";
           	std::cin >> iterationJacobi;
+            //preCond->setIterations(iterationJacobi);
 
           	std::cout << "choose how often to repeat the execution:\n";
           	std::cin >> repetitions;
@@ -331,7 +316,7 @@ int main(int argc, char *argv[]) {
             int iterations;
             std::cout << "choose jacobi iterations:\n";
             std::cin >> iterations;
-            */
+            //
   
             // init section count
             int sections;
@@ -349,8 +334,12 @@ int main(int argc, char *argv[]) {
               std::cout << "choose iteration count for section: " << i << "\n";
               std::cin >> secIter[i];          
             }
-          
-            // initialize iterations
+            */
+
+            preCond = new JacobiBlockAsync();
+            preCond->config();
+
+            // initialize execution count
             int executions = 1;
             std::cout << "choose execution count:\n";
             std::cin >> executions;
@@ -400,9 +389,10 @@ int main(int argc, char *argv[]) {
 
             // initialize resultStruct for logging
             resultJacobi res;
-            res.sections = sections;
-            res.sectionsConf = jacobiAsyncBlockCount;
-            res.sectionsIter = secIter;
+            // TODO build string in preCond class
+            //res.sections = sections;
+            //res.sectionsConf = jacobiAsyncBlockCount;
+            //res.sectionsIter = secIter;
                                                 
 
             // repeat jacobi execution
@@ -416,25 +406,13 @@ int main(int argc, char *argv[]) {
               jacobi_start.push_back(std::chrono::high_resolution_clock::now());
   
               // lower jacobi
-              //jacobiLowerSync(A, iterationsLower, one, gLz, y);
-              //jacobiLowerHalfSync(A, iterationsLower, one, gLz);
-              //jacobiLowerAsync(A, iterationsLower, r, s);
-              jacobi(A, one, gLz, &lowerLine, sections, jacobiAsyncBlockCount, secIter);
-              //jacobiLowerDyn(A, iterationsLower, one, gLz, jacobiAsyncBlockCount);
+              preCond->solveLower(A, one, gLz);
   
-            
               // checkpoint for time mesuurement
               jacobi_between.push_back(std::chrono::high_resolution_clock::now());
-  
-  
-              // check what norm is with initial guess
-              //std::cout << "norm befor: " << computeResidualUpper(A, s, x, y) << "\n";
-  
-              // upper jacobi
-              //jacobiUpperSync(A, iterationsUpper, one, gUz, y);
-              //jacobiUpperHalfSync(A, iterationsUpper, one, gUz);
-              //jacobiUpperAsync(A, iterationsUpper, s, x);
-              jacobi(A, one, gUz, &upperLine, sections, jacobiAsyncBlockCount, secIter);  
+
+              // upper jacobi 
+              preCond->solveUpper(A, one, gUz);
 
             
               // end Time messurement
@@ -505,7 +483,7 @@ int main(int argc, char *argv[]) {
             res.minNormJacobiUpper = norm_upper_min;
 
             // write result to logfile
-            writeJacobiResult(&myfile, &res);
+            writeJacobiResult(&myfile, &res, preCond);
 
             //console output
             //std::cout << "iterL: " << iterations;

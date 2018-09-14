@@ -1,6 +1,8 @@
 #ifndef RESULT_H
 #define RESULT_H
 
+#include <string>
+
 typedef struct resultFGMRES {
   int restart, iter, steps, restarts;
   double time, timeJacobiLower, timeJacobiUpper;
@@ -11,9 +13,7 @@ typedef struct resultFGMRES {
 } resultFGMRES;
 
 typedef struct resultJacobi {
-  int sections;
-  int *sectionsConf;
-  int *sectionsIter;
+  std::string description;
   double averageTimeJacobiLower, averageTimeJacobiUpper;
   double averageNormJacobiLower, averageNormJacobiUpper;
   double maxNormJacobiLower, minNormJacobiLower;
