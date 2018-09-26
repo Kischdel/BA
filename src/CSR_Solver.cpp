@@ -27,6 +27,8 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     *tol -> ||x||2<=tol to be solution
     *restart -> restart after k steps
     *result -> solution
+    *P -> Preconditioner
+    *res -> data struct used to store analytical data of the execution (for logging purposes)
     */
     int debug = 1;
     const char transpose = 'n';
@@ -142,29 +144,15 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
 //preconditioning  
         //P->precondition(vectorsize,&v[stepcounter*vectorsize],&z[stepcounter*vectorsize]);
         
-        //messure time
+        //Preconditioning with time messurement
         jacobi_start.push_back(std::chrono::high_resolution_clock::now());
-        
-        //upper jacobi
         P->solveLower(A, &v[stepcounter*vectorsize], s);
-        //jacobiLowerSync(A, preIter, &v[stepcounter*vectorsize], s, x_temp);
-        //jacobiLowerHalfSync(A, preIter, &v[stepcounter*vectorsize], s);
-        //jacobiLowerAsync(A, preIter, &v[stepcounter*vectorsize], s);
-        //jacobi(A, preIter, &v[stepcounter*vectorsize], s, lower);
-
         jacobi_between.push_back(std::chrono::high_resolution_clock::now());
-
-        //lower jacobi
-        //jacobiUpperSync(A, preIter, s, &z[stepcounter*vectorsize], x_temp);
-        //jacobiUpperHalfSync(A, preIter, s, &z[stepcounter*vectorsize]);
-        //jacobiUpperAsync(A, preIter, s, &z[stepcounter*vectorsize]);
-        //jacobi(A, preIter, s, &z[stepcounter*vectorsize], upper);
         P->solveUpper(A, s, &z[stepcounter*vectorsize]);
-
         jacobi_stop.push_back(std::chrono::high_resolution_clock::now());
 
         
-        // check accuracy of preconditioning
+        // check accuracy of preconditioning. yes, this bloats the FGMRES Time slightly
         normJacobiLower.push_back(computeResidualLower(A, &v[stepcounter*vectorsize], s, x_temp));
         normJacobiUpper.push_back(computeResidualUpper(A, s, &z[stepcounter*vectorsize], x_temp));
 

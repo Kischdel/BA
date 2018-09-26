@@ -14,6 +14,7 @@ std::string Str( const T & t ) {
    return os.str();
 }
 
+// abstract class
 class Preconditioner {
   protected:
     int iterations;
@@ -39,6 +40,7 @@ class Preconditioner {
   	}
 };
 
+// Default Jacobi
 class JacobiDefault: public Preconditioner {
   protected:
     int nBlock;
@@ -76,6 +78,7 @@ class JacobiDefault: public Preconditioner {
   	}
 };
 
+// Concurrent Jacobi
 class JacobiConcurrent: public Preconditioner {
   protected:
 
@@ -102,7 +105,7 @@ class JacobiConcurrent: public Preconditioner {
   	}
 };
 
-
+// Asynchron Jacobi
 class JacobiAsync: public JacobiConcurrent {
   protected:
 
@@ -120,6 +123,7 @@ class JacobiAsync: public JacobiConcurrent {
     }
 };
 
+//overhead messurement
 class ParallelOverhead: public Preconditioner {
   protected:
 
@@ -146,6 +150,7 @@ class ParallelOverhead: public Preconditioner {
     }
 };
 
+// BA Jacobi
 class JacobiBlockAsync: public Preconditioner {
   protected:
     int secNum;
@@ -209,7 +214,7 @@ class JacobiBlockAsync: public Preconditioner {
   	}
 };
 
-
+// BA Jacobi with busy wait
 class BusyTest: public Preconditioner {
   protected:
   int blockCount;

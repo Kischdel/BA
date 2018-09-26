@@ -7,7 +7,6 @@
 #include <cmath>
 #include <omp.h>
 #include "blas.h"
-#include "parex.h"
 #include "sparsematrix.h"
 #include "jacobi_par.h"
 #include "CSR_Solver.h"
@@ -195,10 +194,8 @@ int main(int argc, char *argv[]) {
           double *b = new double[n];
           calculateB(nBlock, b);
 
-          // initialize x0
+          // initialize x0 and result
           double *x = new double[n] {};
-
-          // initialize result
           double *r = new double[n] {};
 
           // parameters for execution
@@ -238,6 +235,9 @@ int main(int argc, char *argv[]) {
           }
 
           //printVector("result", n, r);
+
+          // end logging
+          myfile.close();
 
           //free allocated memory
           delete[] b;
@@ -287,10 +287,8 @@ int main(int argc, char *argv[]) {
               resultFGMRES res;
               res.restart = i;
 
-              // initialize x0
+              // initialize x0 and result
               double *x = new double[n] {};
-  
-              // initialize result
               double *r = new double[n] {};
 
               // run FGMRES
@@ -388,26 +386,18 @@ int main(int argc, char *argv[]) {
               //std::cout << "norm Lower befor: " << computeResidualLower(A, one, gLz, y) << "\n";
               //std::cout << "norm Upper befor: " << computeResidualLower(A, one, gUz, y) << "\n";
   
-              // start Time messurement
+              // execution and time messurement
               jacobi_start.push_back(std::chrono::high_resolution_clock::now());
-  
-              // lower jacobi
               preCond->solveLower(A, one, gLz);
-  
-              // checkpoint for time mesuurement
               jacobi_between.push_back(std::chrono::high_resolution_clock::now());
-
-              // upper jacobi 
               preCond->solveUpper(A, one, gUz);
-
-              // end Time messurement
               jacobi_stop.push_back(std::chrono::high_resolution_clock::now());
 
               // calculate norm
               normLower.push_back(computeResidualLower(A, one, gLz, y));
               normUpper.push_back(computeResidualUpper(A, one, gUz, y));
   
-  
+              // memory realocation
               delete[] gLz;
               delete[] gUz;
   

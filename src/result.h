@@ -3,6 +3,7 @@
 
 #include <string>
 
+// holds data of a FGMRES execution
 typedef struct resultFGMRES {
   int restart, steps, restarts;
   double time, timeJacobiLower, timeJacobiUpper;
@@ -12,6 +13,7 @@ typedef struct resultFGMRES {
 
 } resultFGMRES;
 
+// holds data of a Jacobi execution
 typedef struct resultJacobi {
   double averageTimeJacobiLower, averageTimeJacobiUpper;
   double averageNormJacobiLower, averageNormJacobiUpper;

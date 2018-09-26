@@ -151,7 +151,7 @@ void jacobiDynBusy(SparseMatrix *I, double *b, double *x, void (*func)(const int
 
 
 
-// teaming with syncronisation while redistributing teams
+// teaming with syncronisation while redistributing teams (nested parallel regions)
 void jacobi(SparseMatrix *I, double *b, double *x, void (*func)(const int, const int, const int, double*, double*, int*, int*, double*), int secNum, int *secConf, int *secIter) {
   
   // initialize parameters
@@ -209,17 +209,7 @@ void jacobi(SparseMatrix *I, double *b, double *x, void (*func)(const int, const
       }
 
 	 		int threadsPerTeam = maxThreadCount / secConf[i];
-  
-      /*
-	 		#pragma omp critical
-	 		{
-	 			std::cout << "tid: " << parent_tid << " threads_active: " << threads;
-	 			std::cout << " start: " << start << " stop: " << end << std::endl;
-	 		}
-      
-  
-	 		#pragma omp barrier
-      */
+
 
       //iterations in jacobi per section
       do {
@@ -228,41 +218,17 @@ void jacobi(SparseMatrix *I, double *b, double *x, void (*func)(const int, const
           #pragma omp parallel for num_threads(threadsPerTeam)
           for (int k = start; k < end; ++k)
           {
-            /*
-            #pragma omp critical
-            {
-              std::cout << "tid: " << parent_tid << " / " << omp_get_thread_num() << " threads_active: " << omp_get_num_threads();
-              std::cout << " iter: " << iterationsPerThread[parent_tid];
-              std::cout << " line: " << k << std::endl;
-            }
-            */
             func(k, nBlock, n, b, x, row, col, val);
           }
         } else {
           #pragma omp parallel for num_threads(threadsPerTeam)
           for (int k = end - 1; k >= start; --k)
-          //for (int k = start; k < end; ++k)
           {
-            /*
-            #pragma omp critical
-            {
-              std::cout << "tid: " << parent_tid << " / " << omp_get_thread_num() << " threads_active: " << omp_get_num_threads();
-              std::cout << " iter: " << j;
-              std::cout << " line: " << k << std::endl;
-            }
-            */
             func(k, nBlock, n, b, x, row, col, val);
           }
         }
         
         iterationsPerTeam[parent_tid]++;
-
-        /*
-        #pragma omp critical
-        {
-            std::cout << "tid: " << parent_tid << " iterations executed " << iterationsPerTeam[parent_tid] << std::endl;
-        }
-        */
 
         // update thread iter count and check if min iterations reached
         if (iterationsPerTeam[parent_tid] == secIter[i]) {
@@ -270,25 +236,11 @@ void jacobi(SparseMatrix *I, double *b, double *x, void (*func)(const int, const
           #pragma omp atomic
           teamsFinished++;
 
-          /*
-          #pragma omp critical
-          {
-            std::cout << "tid: " << parent_tid << " teamsFinished: " << teamsFinished << std::endl;
-          }
-          */
-
           if (teamsFinished >= secConf[i] / 3) {
 
             proceedToNextSection = true;
-            /*
-            #pragma omp critical
-            {
-              std::cout << "tid: " << parent_tid << " abort section" << std::endl;
-            }
-            */
           }
         }
-
       } while (!proceedToNextSection);
       
       //#pragma omp barrier
@@ -528,7 +480,7 @@ void jacobiUpperSync(SparseMatrix *I, const int iterations, double *b, double *x
   }
 }
 
-// fully syncronized jacobi version without concurrent access to x
+// function to messure Overhead
 void parallelOverheadLower(SparseMatrix *I, const int iterations, double *b, double *x) {
       
   int n = I->n;

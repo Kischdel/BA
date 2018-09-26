@@ -7,6 +7,7 @@
 #include <string>
 #include <omp.h>
 
+// print matrix to console
 void SparseMatrix::print() {
 
   int nextVal = 0;
@@ -25,6 +26,7 @@ void SparseMatrix::print() {
   }
 }
 
+// print ILU values to console
 void SparseMatrix::printILU() {
 
   int nextVal = 0;
@@ -43,6 +45,7 @@ void SparseMatrix::printILU() {
   }
 }
 
+// compute ILU
 void SparseMatrix::computeILU() {
   
   for(int k = 0; k < n - 1; k++) {
@@ -72,7 +75,7 @@ void SparseMatrix::computeILU() {
   }
 }
 
-
+// set value in ILU
 void SparseMatrix::setILUValAt(int i, int j, double val) {
   
   int rowIndex = row[i];
@@ -98,7 +101,7 @@ void SparseMatrix::setILUValAt(int i, int j, double val) {
 }
 
 
-
+// get value
 double SparseMatrix::getValAt(int i, int j) {
   
   int rowIndex = row[i];
@@ -117,7 +120,7 @@ double SparseMatrix::getValAt(int i, int j) {
   return 0;
 }
 
-
+// get ILU value
 double SparseMatrix::getILUValAt(int i, int j) {
   
   int rowIndex = row[i];
@@ -136,7 +139,7 @@ double SparseMatrix::getILUValAt(int i, int j) {
   return 0;
 }
 
-
+//get lower ILU value
 double SparseMatrix::getLowerILUValAt(int i, int j) {
   
   int rowIndex = row[i];
@@ -157,7 +160,7 @@ double SparseMatrix::getLowerILUValAt(int i, int j) {
   return 0;
 }
 
-
+// get upper ILU value
 double SparseMatrix::getUpperILUValAt(int i, int j) {
   
   int rowIndex = row[i];
@@ -177,6 +180,7 @@ double SparseMatrix::getUpperILUValAt(int i, int j) {
   return 0;
 }
 
+// save all data to file
 void SparseMatrix::saveToFile() {
   
   std::ostringstream buildfilename;
@@ -218,6 +222,7 @@ void SparseMatrix::saveToFile() {
   myfile.close();
 }
 
+// compute Matrix entries
 void SparseMatrix::calculateEntrys(int nBlock, std::vector<ent*> *list) {
   
   // diag
@@ -276,6 +281,7 @@ void SparseMatrix::calculateEntrys(int nBlock, std::vector<ent*> *list) {
   std::sort(list->begin(), list->end(), SparseMatrix::PComp);
 }
 
+// initialize matrix from file
 SparseMatrix::SparseMatrix(std::string filename) {
   
   std::ifstream myfile;
@@ -319,7 +325,7 @@ SparseMatrix::SparseMatrix(std::string filename) {
 }
 
 
-
+// intialize and compute Matrix
 SparseMatrix::SparseMatrix(int nBlock) {
   this->n = nBlock*nBlock;
   this->nBlock = nBlock;
@@ -354,6 +360,7 @@ SparseMatrix::SparseMatrix(int nBlock) {
   }
 }
 
+// destruct matrix
 SparseMatrix::~SparseMatrix() {
   delete[] val;
   delete[] valILU;
