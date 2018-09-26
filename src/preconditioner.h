@@ -64,7 +64,7 @@ class JacobiDefault: public Preconditioner {
 
         help = new double[nBlock * nBlock] {};
 
-        confDesc += Str(iterations);
+        confDesc = Str(iterations);
   	}
 
   	JacobiDefault() {
@@ -94,12 +94,56 @@ class JacobiConcurrent: public Preconditioner {
         std::cout << "choose Jacobi iterations:\n";
         std::cin >> iterations;
 
-        confDesc += Str(iterations);
+        confDesc = Str(iterations);
   	}
 
   	JacobiConcurrent() {
   		name = "con";
   	}
+};
+
+
+class JacobiAsync: public JacobiConcurrent {
+  protected:
+
+  public:
+    void solveLower(SparseMatrix *I, double *b, double *x) {
+      jacobiLowerAsync(I, iterations, b, x);
+    }
+
+    void solveUpper(SparseMatrix *I, double *b, double *x) {
+      jacobiUpperAsync(I, iterations, b, x);
+    }
+
+    JacobiAsync() {
+      name = "asy";
+    }
+};
+
+class ParallelOverhead: public Preconditioner {
+  protected:
+
+  public:
+    void solveLower(SparseMatrix *I, double *b, double *x) {
+      parallelOverheadLower(I, iterations, b, x);
+    }
+
+    void solveUpper(SparseMatrix *I, double *b, double *x) {
+      parallelOverheadUpper(I, iterations, b, x);
+    }
+
+    void config() {
+
+      // read parameters from keyboard
+        std::cout << "choose Jacobi iterations:\n";
+        std::cin >> iterations;
+
+        confDesc = Str(iterations);
+    }
+
+    ParallelOverhead() {
+      name = "ovh";
+    }
 };
 
 class JacobiBlockAsync: public Preconditioner {
@@ -121,7 +165,7 @@ class JacobiBlockAsync: public Preconditioner {
   		// init section count
         std::cout << "choose jacobi sections:\n";
         std::cin >> secNum;
-		confDesc += Str(secNum) + std::string(";");  
+		    confDesc = Str(secNum) + std::string(";");  
         // i think i need to do something to delete arrays if this is not the first configuration.
         // but even if there is a memory leak, it's so small, it wont be a problem.
 
@@ -165,5 +209,36 @@ class JacobiBlockAsync: public Preconditioner {
   	}
 };
 
+
+class BusyTest: public Preconditioner {
+  protected:
+  int blockCount;
+
+  public:
+
+    void solveLower(SparseMatrix *I, double *b, double *x) {
+      jacobiDynBusy(I, b, x, &lowerLine, blockCount, iterations);
+    }
+
+    void solveUpper(SparseMatrix *I, double *b, double *x) {
+      jacobiDynBusy(I, b, x, &upperLine, blockCount, iterations);
+    }
+
+    void config() {
+
+      // read parameters from keyboard
+      std::cout << "how many blocks?\n";
+      std::cin >> blockCount;
+
+      std::cout << "choose Jacobi iterations:\n";
+      std::cin >> iterations;
+
+      confDesc = Str(blockCount) + std::string(";") + Str(iterations);
+    }
+
+    BusyTest() {
+      name = "bwt";
+    }
+};
 
 #endif //PRECONDITIONER_H

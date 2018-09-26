@@ -6,8 +6,8 @@
 #include "jacobi_par.h"
 
 
-// "dynamic" blockasynchron jacobi with way to much overhead
-void jacobiLowerDyn(SparseMatrix *I, const int iterations, double *b, double *x, int asyncBlockCount) {
+// "dynamic" blockasynchron jacobi with busy wait
+void jacobiDynBusy(SparseMatrix *I, double *b, double *x, void (*func)(const int, const int, const int, double*, double*, int*, int*, double*), int blockCount, int iterations) {
 
   // initialize parameters
   int n = I->n;
@@ -19,156 +19,134 @@ void jacobiLowerDyn(SparseMatrix *I, const int iterations, double *b, double *x,
   int *row = I->row;
   int rowSize = I->rowSize;
 
-  int numSections = 1;
-  int teamConfig[numSections] = {1}; //, 1, 1, 1};
-  teamConfig[0] = asyncBlockCount;
-
-
-  int maxThreadCount = omp_get_max_threads();
+  int numThreads = omp_get_max_threads();
+  int threadsPerTeam = numThreads / blockCount;
 
   // arrays to controll execution
-  int iterationsPerThread[maxThreadCount] = {};
-  int iterationsPerTeam[maxThreadCount] = {};
-  int teamMembersFinished[maxThreadCount] = {};
-  int teamMembersFinishedIteration[maxThreadCount] = {};
+  int iterationsPerThread[numThreads] = {};
+  int teamMembersFinishedIteration[blockCount] = {};
   
   // parameter for barrier
-  int teamBarrier[maxThreadCount] = {};
-  omp_lock_t locks[maxThreadCount];
+  int teamBarrier[blockCount] = {};
+  omp_lock_t locks[blockCount];
+  for (int i = 0; i < blockCount; i++)
+    omp_init_lock(&locks[i]);
 
   // number of teams finished
   int teamsFinished = 0;
 
   // initialize abort condition
-  bool proceedToNextSection = false;
+  int finished[blockCount] = {};
 
 
-
-  #pragma omp parallel num_threads(maxThreadCount)
+  #pragma omp parallel
   {
     // initialize omp parameter
     int tid = omp_get_thread_num();
     int numThreads = omp_get_num_threads();
-    omp_init_lock(&locks[tid]);
+    
 
-
-    // loop for sections
-    for (int i = 0; i < numSections; i++) {
-
-      // initialize parameter that define worksplitting
-      int numTeams = teamConfig[i];
-
-      int threadsPerTeam = numThreads / numTeams;
-      int team = tid / threadsPerTeam;
-
-      int leader = team * threadsPerTeam;
-
-      int chunkRest = n % numThreads;
-      int tidOffset = numThreads - chunkRest;
-      int chunkSize = n / numThreads;
+    int chunkRest = n % numThreads;
+    int tidOffset = numThreads - chunkRest;
+    int chunkSize = n / numThreads;
   
-      int start;
-      int end;
-      int offset = tidOffset * chunkSize;
+    int start;
+    int end;
+    int offset = tidOffset * chunkSize;
 
 
-      if (tid < tidOffset) {
+    if (tid < tidOffset) {
 
-        start = tid * chunkSize;
-        end = start + chunkSize;
+      start = tid * chunkSize;
+      end = start + chunkSize;
 
+    } else {
+
+      chunkSize++;
+      start = offset + ((tid - tidOffset) * chunkSize);
+      end = start + chunkSize;
+    }
+
+    int team = tid / threadsPerTeam;
+
+    /* debug output
+    #pragma omp critical
+    {
+      std::cout << "tid: " << tid << " team: " << team  << "\n";
+    }
+    #pragma omp barrier
+    //*/
+
+
+    // blockasynchron loop
+    do {
+
+      // progress lines
+      if (func == &lowerLine) {
+        for (int j = start; j < end; ++j)
+        {
+          func(j, nBlock, n, b, x, row, col, val);
+        }
       } else {
 
-        chunkSize++;
-        start = offset + ((tid - tidOffset) * chunkSize);
-        end = start + chunkSize;
-      }
-
-      /*// temp console output
-      #pragma omp critical
-      {
-        std::cout << "tid: " << tid << " team: " << team << " leader: " << leader << " section: " << i;
-        std::cout << " start: " << start << " stop: " << end << std::endl;
-      }
-      */
-
-
-      // blockasynchron loop
-      do {
-
-        // progress lines
-        for (int j = start; j < end; j++) {
-          lowerLine(j, nBlock, n, b, x, row, col, val);
-        }
-
-        iterationsPerThread[tid]++;
-
-        /*#pragma omp critical
+        for (int j = end - 1; j >= start; --j)
         {
-            std::cout << "tid: " << tid << " team: " << team << " leader: " << leader << " iterations executed " << iterationsPerThread[tid] << std::endl;
+          func(j, nBlock, n, b, x, row, col, val);
         }
-        */
+      }
 
-        // update thread iter count and check if min iterations reached
-        if (tid == leader && iterationsPerThread[tid] == iterations) {
+      iterationsPerThread[tid]++;
+      
+
+      // custom Barrier end of iteration      
+      while (teamBarrier[team] != 0);
+
+      omp_set_lock(&locks[team]);
+      // debug output
+      //std::cout << "tid: " << tid << " team: " << team << " iterF: " << iterationsPerThread[tid] << " B: " << finished[team] << "\n";
+      if (++teamMembersFinishedIteration[team] < threadsPerTeam) {
+        //debug output
+        //std::cout << teamMembersFinishedIteration[team] << "\n";
+        omp_unset_lock(&locks[team]);
+        while (teamBarrier[team] == 0);
+        omp_set_lock(&locks[team]);
+
+      } else {
+        // debug output
+        //std::cout << "tid: " << tid << " team: " << team << " count to last thread correct\n";
+        
+        teamBarrier[team] = 1;
+
+        // check if min iterations reached
+        // it is the job of the last thread to enter, because if done earlier it might cause a deadlock
+        if (iterationsPerThread[tid] == iterations) {
 
           #pragma omp atomic
           teamsFinished++;
-
-          /*#pragma omp critical
-          {
-            std::cout << "tid: " << tid << " team: " << team << " leader: " << leader << " teamsFinished: " << teamsFinished << std::endl;
-          }
-          */
-
-          if (teamsFinished >= numTeams / 3) {
-
-            proceedToNextSection = true;
-          }
         }
+        // if enough teams have finished abort
+        if (teamsFinished >= blockCount / 3 && teamsFinished >= 1 ) {
 
-        // custom Barrier
-        while (teamBarrier[team] != 0);
-
-        omp_set_lock(&locks[team]);
-        if (++teamMembersFinishedIteration[team] < threadsPerTeam) {
-
-          omp_unset_lock(&locks[team]);
-          while (teamBarrier[team] == 0);
-          omp_set_lock(&locks[team]);
-
-        } else {
-
-          teamBarrier[team] = 1;
+            finished[team] = 1;
         }
+      }
 
-        if (--teamMembersFinishedIteration[team] == 0) {
+      if (--teamMembersFinishedIteration[team] == 0) {
           
-          teamBarrier[team] = 0; 
-        }
-        omp_unset_lock(&locks[team]);
-        // end custom Barrier
+        teamBarrier[team] = 0; 
+      }
 
-      } while (!proceedToNextSection);
+      // debug output
+      //std::cout << "tid: " << tid << " team: " << team << " iterF: " << iterationsPerThread[tid] << " teamF: " << teamsFinished << " A: " << finished[team] << "\n";
 
+      omp_unset_lock(&locks[team]);
+      // end custom Barrier
 
-      // barrier before preparation for next section
-      #pragma omp barrier
+    } while (finished[team] == 0);
 
-      // reset parameters
-      teamMembersFinished[tid] = 0;
-
-
-      
-      // end of section barrier
-      #pragma omp barrier
-
-    } // end Sections
-
-    #pragma omp barrier
     // cleanup
-    omp_destroy_lock(&locks[tid]);
-  }
+    omp_destroy_lock(&locks[team]);
+  } // end parallel section
 }
 
 
@@ -419,57 +397,6 @@ void upperLine(const int lineIndex, const int nBlock, const int n, double *b, do
 	x[lineIndex] = x_at_lineIndex;
 }
 
-void upperLineExperimental(const int lineIndex, const int nBlock, const int n, double *b, double *x, int *row, int *col, double *val) {
-
-  bool firstBlockRow = (lineIndex < nBlock);
-  bool notFirstRow = (lineIndex % nBlock != 0);
-  bool lastBlockRow = (lineIndex >= n - nBlock);
-  bool notLastRow = (lineIndex % nBlock != nBlock - 1);
-  int rowIndex = row[lineIndex];
-  double x_at_lineIndex = b[lineIndex];
-  double *data;
-  int *dataCol;
-        
-  
-  // calculate where the diagonal element is located
-  int offsetUpper = 0;
-  
-  if (firstBlockRow) {
-  
-    if (lineIndex != 0)
-      offsetUpper = 1;
-  
-  } else {
-  
-    offsetUpper = 1;
-    if (notFirstRow)
-      offsetUpper = 2;
-  }
-  
-  data = val + rowIndex + offsetUpper;
-  dataCol = col + rowIndex + offsetUpper + 1;
-  
-  // store diagonal Value for division
-  double diagVal = *(data++);
-  
-  if (lastBlockRow) {
-          
-    if (notLastRow)
-      x_at_lineIndex -= *(data++) * x[*(dataCol++)];
-          
-    x_at_lineIndex /= diagVal;
-          
-  } else {
-        
-    if (notLastRow)
-      x_at_lineIndex -= *(data++) * x[*(dataCol++)];
-    x_at_lineIndex -= *(data++) * x[*(dataCol++)];
-          
-    x_at_lineIndex /= diagVal; 
-  }
-  x[lineIndex] = x_at_lineIndex;
-}
-
 
 // fully syncronized jacobi version without concurrent access to x
 void jacobiLowerSync(SparseMatrix *I, const int iterations, double *b, double *x0, double *x) {
@@ -596,6 +523,52 @@ void jacobiUpperSync(SparseMatrix *I, const int iterations, double *b, double *x
       for (int i = 0; i < n; i++) {
 
         x0[i] = x[i];
+      }
+    }
+  }
+}
+
+// fully syncronized jacobi version without concurrent access to x
+void parallelOverheadLower(SparseMatrix *I, const int iterations, double *b, double *x) {
+      
+  int n = I->n;
+  int nBlock = I->nBlock;
+  
+  double *val = I->valILU;
+  int valSize = I->valSize;
+  int *col = I->col;
+  int *row = I->row;
+  int rowSize = I->rowSize;
+
+  #pragma omp parallel
+  {
+    for (int m = 0; m < iterations; m++) {
+      
+      #pragma omp for schedule(static)
+      for (int i = 0; i < n; i++) {
+      }
+    }
+  }
+}
+
+void parallelOverheadUpper(SparseMatrix *I, const int iterations, double *b, double *x) {
+      
+  int n = I->n;
+  int nBlock = I->nBlock;
+  
+  double *val = I->valILU;
+  int valSize = I->valSize;
+  int *col = I->col;
+  int *row = I->row;
+  int rowSize = I->rowSize;
+  
+  
+  #pragma omp parallel
+  {
+    for (int m = 0; m < iterations; m++) {
+      
+      #pragma omp for schedule(static)
+      for (int i = n -1; i >= 0; i--) {
       }
     }
   }

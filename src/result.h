@@ -4,7 +4,7 @@
 #include <string>
 
 typedef struct resultFGMRES {
-  int restart, iter, steps, restarts;
+  int restart, steps, restarts;
   double time, timeJacobiLower, timeJacobiUpper;
   double averageTimeJacobiLower, averageTimeJacobiUpper;
   double timeFgmres, averageTimeFgmres;
@@ -13,7 +13,6 @@ typedef struct resultFGMRES {
 } resultFGMRES;
 
 typedef struct resultJacobi {
-  std::string description;
   double averageTimeJacobiLower, averageTimeJacobiUpper;
   double averageNormJacobiLower, averageNormJacobiUpper;
   double maxNormJacobiLower, minNormJacobiLower;

@@ -41,10 +41,11 @@ void calculateB(int nBlock, double* b) {
 }
 
 // write Result from result struct to logfile
-void writeResult(std::ofstream *file, resultFGMRES *res) {
+void writeResult(std::ofstream *file, resultFGMRES *res, Preconditioner *preCond) {
 
+  *file << omp_get_max_threads() << ";";
 	*file << res->restart << ";";
-  *file << res->iter << ";";
+  *file << preCond->getLogDesc() << ";";
   *file << res->steps << ";";
   *file << res->restarts << ";";
   *file << res->time << ";";
@@ -64,8 +65,7 @@ void writeResult(std::ofstream *file, resultFGMRES *res) {
 // write Result from result struct to logfile
 void writeJacobiResult(std::ofstream *file, resultJacobi *res, Preconditioner *preCond) {
 
-  std::cout << preCond->getLogDesc() << "\n";
-
+  *file << omp_get_max_threads() << ";";
   *file << preCond->getLogDesc() << ";";
   *file << res->averageNormJacobiLower << ";";
   *file << res->averageNormJacobiUpper << ";";
@@ -96,11 +96,14 @@ int main(int argc, char *argv[]) {
     std::cout << "choose action:\n";
     std::cout << "1) compute matrix\n";
     std::cout << "2) load Matrix\n";
-    std::cout << "3) solve single FGMRES\n";
-    std::cout << "4) map out steps/runtime of FGMRES\n";
-    std::cout << "5) execute jacobi\n";
-    std::cout << "6) not defined test section\n";
-    std::cout << "7) quit\n";
+    std::cout << "3) load Preconditioner\n";
+    std::cout << "4) solve single FGMRES\n";
+    std::cout << "5) map out steps/runtime of FGMRES\n";
+    std::cout << "6) execute jacobi\n";
+    std::cout << "7) not defined test section\n";
+    std::cout << "8) set maximum omp threads\n";
+    std::cout << "9) check maximum omp threads\n";
+    std::cout << "10) quit\n";
   
     // read keyboard input
     int input;
@@ -142,8 +145,47 @@ int main(int argc, char *argv[]) {
         break;
 
 
-      // solve the computed/loaded matrix with FGMRES
+      // load preconditioner
       case 3:
+        {
+          // write menu
+          std::cout << "choose preconditioner:\n";
+          std::cout << "1) Standard Fullsync Jacobi\n";
+          std::cout << "2) Concurrent Fullsync Jacobi\n";
+          std::cout << "3) Blockasynchronous Jacobi\n";
+          std::cout << "4) Overhead\n";
+          std::cout << "5) Busy Wait Test (experimental)\n";
+          std::cout << "6) Async Jacobi\n";
+          std::cin >> input;
+
+          switch (input) {
+            case 1:
+              preCond = new JacobiDefault();
+              break;
+            case 2:
+              preCond = new JacobiConcurrent();
+              break;
+            case 3:
+              preCond = new JacobiBlockAsync();
+              break;
+            case 4:
+              preCond = new ParallelOverhead();
+              break;
+            case 5:
+              preCond = new BusyTest();
+              break;
+            case 6:
+              preCond = new JacobiAsync();
+              break;
+            default:
+              std::cout << "not valid\n"; 
+          }
+          preCond->config();
+        }
+        break;
+
+      // solve the computed/loaded matrix with FGMRES
+      case 4:
         {
         	// initialize dimensions
           int nBlock = A->nBlock;
@@ -161,7 +203,6 @@ int main(int argc, char *argv[]) {
 
           // parameters for execution
           int restartFGMRES;
-          int iterationJacobi;
           int repetitions;
 
           // setup logging
@@ -170,7 +211,7 @@ int main(int argc, char *argv[]) {
           buildfilename << nBlock;
           buildfilename << ".txt";
           std::string filename = buildfilename.str(); 
-
+ 
           std::ofstream myfile;
           myfile.open(filename.c_str(), std::ios_base::app);
 
@@ -179,10 +220,6 @@ int main(int argc, char *argv[]) {
           	// read parameters from keyboard
           	std::cout << "choose FGMRES restart size:\n";
           	std::cin >> restartFGMRES;
-	
-          	std::cout << "choose jacobi iterations:\n";
-          	std::cin >> iterationJacobi;
-            //preCond->setIterations(iterationJacobi);
 
           	std::cout << "choose how often to repeat the execution:\n";
           	std::cin >> repetitions;
@@ -192,12 +229,11 @@ int main(int argc, char *argv[]) {
           		// initialize resultStruct for logging
           		resultFGMRES res;
           		res.restart = restartFGMRES;
-            	res.iter = iterationJacobi;
 	
 							// run FGMRES
-          		solver->FGMRES(A, b, x, tol, restartFGMRES, r, iterationJacobi, &res);
+          		solver->FGMRES(A, b, x, tol, restartFGMRES, r, preCond, &res);
 		
-          		writeResult(&myfile, &res);
+          		writeResult(&myfile, &res, preCond);
         		}
           }
 
@@ -211,7 +247,7 @@ int main(int argc, char *argv[]) {
         break;
 
       //map out runntime and steps for a loaded matrix
-      case 4:
+      case 5:
         {
         	// initialize dimensions
           int nBlock = A->nBlock;
@@ -244,43 +280,29 @@ int main(int argc, char *argv[]) {
           	std::cout << "choose stepsize of FGMRES restart range:\n";
           	std::cin >> restartStep;
 
-            // define jacobi iteration range
-            int iterStart;
-            int iterEnd;
-            int iterStep;
-            std::cout << "choose start of jacobi iteration range:\n";
-          	std::cin >> iterStart;
-          	std::cout << "choose end of jacobi iteration range:\n";
-          	std::cin >> iterEnd;
-          	std::cout << "choose stepsize of jacobi iteration range:\n";
-          	std::cin >> iterStep;
+            
+            for(int i = restartStart; i <= restartEnd; i += restartStep) {
 
-            for(int k = iterStart; k <= iterEnd; k += iterStep) {
-              for(int i = restartStart; i <= restartEnd; i += restartStep) {
+              // initialize resultStruct for logging
+              resultFGMRES res;
+              res.restart = i;
 
-                // initialize resultStruct for logging
-                resultFGMRES res;
-                res.restart = i;
-                res.iter = k;
-
-                // initialize x0
-                double *x = new double[n] {};
+              // initialize x0
+              double *x = new double[n] {};
   
-                // initialize result
-                double *r = new double[n] {};
+              // initialize result
+              double *r = new double[n] {};
 
-                // run FGMRES
-                solver->FGMRES(A, b, x, tol, i, r, k, &res);
+              // run FGMRES
+              solver->FGMRES(A, b, x, tol, i, r, preCond, &res);
 
-                // write result to logfile
-                writeResult(&myfile, &res);
+              // write result to logfile
+              writeResult(&myfile, &res, preCond);
 
-                // free memory
-                delete[] x;
-                delete[] r;
-              }
-
-            }      
+              // free memory
+              delete[] x;
+              delete[] r;
+            }     
           } else {
             std::cout << "file Error" << "\n";
           }
@@ -294,7 +316,7 @@ int main(int argc, char *argv[]) {
         break;
 
       // execute jacobi only  
-      case 5:
+      case 6:
         {
         	// initialize dimensions
           int nBlock = A->nBlock;
@@ -312,31 +334,7 @@ int main(int argc, char *argv[]) {
 
           if (myfile.is_open()) {
 
-            /*// initialize iterations
-            int iterations;
-            std::cout << "choose jacobi iterations:\n";
-            std::cin >> iterations;
-            //
-  
-            // init section count
-            int sections;
-            std::cout << "choose jacobi sections:\n";
-            std::cin >> sections;
-  
-            // init async block count
-            int jacobiAsyncBlockCount[sections];
-            int secIter[sections];
-            for (int i = 0; i < sections; i++) {
-              
-              std::cout << "choose Async Block count for section: " << i << "\n";
-              std::cin >> jacobiAsyncBlockCount[i];
-  
-              std::cout << "choose iteration count for section: " << i << "\n";
-              std::cin >> secIter[i];          
-            }
-            */
-
-            preCond = new JacobiBlockAsync();
+            // temp set preCond config, for faster testing
             preCond->config();
 
             // initialize execution count
@@ -371,29 +369,17 @@ int main(int argc, char *argv[]) {
             double g = epsilonfem::EFEM_BLAS::dnrm2 (n, r, 1);
             epsilonfem::EFEM_BLAS::dscal (n, 1.0/g, r, 1);
             
-  
             //messuring execution time
             std::vector<std::chrono::high_resolution_clock::time_point> jacobi_start;
             std::vector<std::chrono::high_resolution_clock::time_point> jacobi_between;
             std::vector<std::chrono::high_resolution_clock::time_point> jacobi_stop;
   
-      
             //setup preconditioning accuracy messurement
             std::vector<double> normLower;
             std::vector<double> normUpper;
-  
-            //pointer to upper and lower
-            void (*lower)(const int, const int, const int, double*, double*, int*, int*, double*) = &lowerLine;
-            void (*upper)(const int, const int, const int, double*, double*, int*, int*, double*) = &upperLine;
          
-
             // initialize resultStruct for logging
             resultJacobi res;
-            // TODO build string in preCond class
-            //res.sections = sections;
-            //res.sectionsConf = jacobiAsyncBlockCount;
-            //res.sectionsIter = secIter;
-                                                
 
             // repeat jacobi execution
             for(int i = 0; i < executions; i++) {
@@ -414,7 +400,6 @@ int main(int argc, char *argv[]) {
               // upper jacobi 
               preCond->solveUpper(A, one, gUz);
 
-            
               // end Time messurement
               jacobi_stop.push_back(std::chrono::high_resolution_clock::now());
 
@@ -435,11 +420,10 @@ int main(int argc, char *argv[]) {
               //std::cout << "\n";
             }
   
-            //calculate times
+            //calculate times and average norm
             auto duration_jacobi_lower = 0;
             auto duration_jacobi_upper = 0;
   
-            //calculate average norm of jacobi
             double sum_norm_lower = 0;
             double sum_norm_upper = 0;
             double norm_lower_max = 0;
@@ -486,7 +470,7 @@ int main(int argc, char *argv[]) {
             writeJacobiResult(&myfile, &res, preCond);
 
             //console output
-            //std::cout << "iterL: " << iterations;
+            std::cout << preCond->getLogDesc() << "\n";
             std::cout << " exec: " << executions << " / residualNorm: ";
             std::cout << averageNormJacobiLower << " / ";
             std::cout << averageNormJacobiUpper << " ; ";
@@ -518,7 +502,7 @@ int main(int argc, char *argv[]) {
         break;
 
       //experiments
-      case 6:
+      case 7:
         {
           
           bool lowerIsDiagonalDominant = true;
@@ -610,8 +594,24 @@ int main(int argc, char *argv[]) {
         }
         break;
 
+      // set omp threads
+      case 8:
+        {
+          std::cout << "choose maximum omp threads\n";  
+          // read keyboard input
+          int input;
+          std::cin >> input;
+          omp_set_num_threads(input);
+        }
+        break;
+
+      // check omp threads
+      case 9:
+        std::cout << "max threads: " << omp_get_max_threads() << "\n";
+        break;
+
       // quit the program
-      case 7:
+      case 10:
         running = false;
         break;
 

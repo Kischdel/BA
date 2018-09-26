@@ -7,6 +7,7 @@
 # include "blas.h"
 # include "jacobi_par.h"
 # include "result.h"
+# include "preconditioner.h"
 
 namespace epsilonfem {
     
@@ -17,7 +18,7 @@ CSR_Solver::CSR_Solver(){}
 
         
 //right preconditioned GMRES with saved preconditioners for flexible changes, also with restart option        
-int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int restart, double *result, int preIter, resultFGMRES *res) {
+int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int restart, double *result, Preconditioner *P, resultFGMRES *res) {
 /*
     *Incomming parameters:
     *A -> left hand side
@@ -102,10 +103,6 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
 
     double *s = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);	              //helper for preconditioning
     double *x_temp = (double *) EFEM_BLAS::efem_calloc(vectorsize,sizeof(double),64);                  //helper for preconditioning
-
-
-//initialize vector for data gathering (residum)
-    //TODO
     
 //messuring execution time
     std::vector<std::chrono::high_resolution_clock::time_point> jacobi_start;
@@ -117,7 +114,6 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
 //setup preconditioning accuracy messurement
     std::vector<double> normJacobiLower;
     std::vector<double> normJacobiUpper;
-
 
 //first step computations
     EFEM_BLAS::dcsrgemv(&transpose, &vectorsize, matrix_a, matrix_i, matrix_j, vec_x0, r);   //residual
@@ -136,12 +132,6 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
     EFEM_BLAS::dcopy (vectorsize, r, 1, &v[0], 1);                           //vectors to compute solution
     EFEM_BLAS::dscal (vectorsize, 1.0/g[0], &v[0], 1);
 
-
-//pointer to upper and lower
-    void (*lower)(const int, const int, const int, double*, double*, int*, int*, double*) = &lowerLine;
-    void (*upper)(const int, const int, const int, double*, double*, int*, int*, double*) = &upperLine;
-
-
 //iterations until convergence or doRestart
     while(reached_tolerance==0 && doRestart==0) {
         
@@ -156,8 +146,9 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
         jacobi_start.push_back(std::chrono::high_resolution_clock::now());
         
         //upper jacobi
+        P->solveLower(A, &v[stepcounter*vectorsize], s);
         //jacobiLowerSync(A, preIter, &v[stepcounter*vectorsize], s, x_temp);
-        jacobiLowerHalfSync(A, preIter, &v[stepcounter*vectorsize], s);
+        //jacobiLowerHalfSync(A, preIter, &v[stepcounter*vectorsize], s);
         //jacobiLowerAsync(A, preIter, &v[stepcounter*vectorsize], s);
         //jacobi(A, preIter, &v[stepcounter*vectorsize], s, lower);
 
@@ -165,9 +156,10 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
 
         //lower jacobi
         //jacobiUpperSync(A, preIter, s, &z[stepcounter*vectorsize], x_temp);
-        jacobiUpperHalfSync(A, preIter, s, &z[stepcounter*vectorsize]);
+        //jacobiUpperHalfSync(A, preIter, s, &z[stepcounter*vectorsize]);
         //jacobiUpperAsync(A, preIter, s, &z[stepcounter*vectorsize]);
         //jacobi(A, preIter, s, &z[stepcounter*vectorsize], upper);
+        P->solveUpper(A, s, &z[stepcounter*vectorsize]);
 
         jacobi_stop.push_back(std::chrono::high_resolution_clock::now());
 
@@ -317,7 +309,7 @@ int CSR_Solver::FGMRES(SparseMatrix *A, double *b, double *x0, double tol, int r
 
 //print results
     std::cout << "execution time: " << res->time << " seconds \n";
-    std::cout << "restart: " << restart << " / Jacobi iterations: " << preIter << " / matrix: " << A->nBlock << "\n";
+    std::cout << "restart: " << restart << " / Jacobi: " << P->getLogDesc() << " / matrix: " << A->nBlock << "\n";
     std::cout << "fgmres time: " << res->timeFgmres << "\n";
     std::cout << "average fgmres time: " << res->averageTimeFgmres << "\n";
     std::cout << "jacobi time lower: " << res->timeJacobiLower << " s \n";

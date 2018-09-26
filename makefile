@@ -16,10 +16,10 @@ $(TARGET)jacobi_par.o: $(SOURCE)jacobi_par.cpp
 	$(CC) $(CFLAGS) -c -o $(TARGET)jacobi_par.o $(SOURCE)jacobi_par.cpp
  
 #$(TARGET)fgmres.o: $(SOURCE)fgmres.cpp
-	#$(CC) $(CFLAGS) -c -o $(TARGET)fgmres.o $(SOURCE)fgmres.cpp
+#	$(CC) $(CFLAGS) -c -o $(TARGET)fgmres.o $(SOURCE)fgmres.cpp
  
-$(TARGET)parex.o: $(SOURCE)parex.cpp
-	$(CC) $(CFLAGS) -c -o $(TARGET)parex.o $(SOURCE)parex.cpp
+#$(TARGET)parex.o: $(SOURCE)parex.cpp
+#	$(CC) $(CFLAGS) -c -o $(TARGET)parex.o $(SOURCE)parex.cpp
 
 $(TARGET)sparsematrix.o: $(SOURCE)sparsematrix.cpp
 	$(CC) $(CFLAGS) -c -o $(TARGET)sparsematrix.o $(SOURCE)sparsematrix.cpp
